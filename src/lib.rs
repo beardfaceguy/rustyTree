@@ -4,4 +4,5 @@
 //! exercised by integration tests and, eventually, by alternative front-ends.
 //! The `eframe`/`egui` UI lives in the binary (`src/main.rs`).
 
+pub mod format;
 pub mod scan;
