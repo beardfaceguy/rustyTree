@@ -191,8 +191,12 @@ impl RustyTreeApp {
         }
     }
 
-    /// Apply a command to state. Returns whether the loop should keep
-    /// running.
+    /// Apply a command to state and return what the event loop should
+    /// do next: [`Action::Quit`] to exit, or [`Action::Redraw`] for any
+    /// other command (since dispatching a command always potentially
+    /// mutates observable state). [`Action::Ignore`] is reserved for
+    /// `on_key` rejecting an unbound key — by the time we're inside
+    /// `dispatch` we've already committed to running a real command.
     pub fn dispatch(&mut self, cmd: Command) -> Action {
         match cmd {
             Command::Quit => return Action::Quit,

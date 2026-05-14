@@ -95,16 +95,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut RustyTreeApp
 
         if event::poll(poll_timeout).context("event::poll")? {
             let ev = event::read().context("event::read")?;
-            if let Event::Key(key) = ev
-                && key.kind == event::KeyEventKind::Press
-            {
-                match app.on_key(key) {
-                    Action::Quit => return Ok(()),
-                    Action::Redraw => redraw = true,
-                    Action::Ignore => {}
+            match ev {
+                Event::Key(key) if key.kind == event::KeyEventKind::Press => {
+                    match app.on_key(key) {
+                        Action::Quit => return Ok(()),
+                        Action::Redraw => redraw = true,
+                        Action::Ignore => {}
+                    }
                 }
+                // A terminal resize forces a redraw even though no app
+                // state changed — the previous frame's geometry is now
+                // wrong. Without this, an idle UI gets a stale/clipped
+                // layout until the next key or scan event lands.
+                Event::Resize(_, _) => redraw = true,
+                // Mouse events and key-release events ignored for MVP.
+                _ => {}
             }
-            // Mouse events ignored for MVP.
         }
 
         if redraw {
