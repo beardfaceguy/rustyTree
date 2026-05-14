@@ -238,7 +238,7 @@ fn format_cell(
             pad_to_width(&format::percent(frac), width as usize, kind)
         }
         ColumnKind::Allocated => {
-            pad_to_width(&format::bytes(node.alloc_total), width as usize, kind)
+            pad_to_width(&format::bytes_opt(node.alloc_total), width as usize, kind)
         }
         ColumnKind::FileCount => pad_to_width(&node.file_count.to_string(), width as usize, kind),
         ColumnKind::DirCount => pad_to_width(&node.dir_count.to_string(), width as usize, kind),

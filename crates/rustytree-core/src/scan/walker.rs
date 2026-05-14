@@ -83,8 +83,12 @@ pub fn build_tree(
         };
 
         let pm = platform::extract(&md);
-        let (size_self, alloc_self) = match kind {
-            NodeKind::Dir => (0, 0),
+        // Directories don't contribute their own allocated bytes — the
+        // children do — so they always report Some(0). Files/symlinks
+        // forward whatever the platform gave us (Some on unix, None on
+        // Windows / unsupported platforms).
+        let (size_self, alloc_self): (u64, Option<u64>) = match kind {
+            NodeKind::Dir => (0, Some(0)),
             NodeKind::File | NodeKind::Symlink => (md.len(), pm.allocated_bytes),
         };
 

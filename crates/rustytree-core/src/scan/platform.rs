@@ -7,9 +7,13 @@
 //! Currently filled in:
 //! - **Linux/macOS/BSD (unix):** allocated bytes via `blocks() * 512`,
 //!   owner name via the `uzers` crate (cached), mtime via `metadata.modified()`.
-//! - **Windows:** allocated bytes falls back to logical size (a real
-//!   `GetCompressedFileSize` lookup is deferred), owner is `None`,
-//!   mtime via `metadata.modified()`.
+//! - **Windows:** allocated bytes is `None` (a real `GetCompressedFileSize`
+//!   lookup is deferred), owner is `None`, mtime via `metadata.modified()`.
+//!
+//! `allocated_bytes` is an `Option<u64>` precisely so that "we don't
+//! know the on-disk size" reads as `None` rather than getting silently
+//! aliased onto the logical size — the latter would make the Allocated
+//! column meaningless on Windows.
 
 use std::fs::Metadata;
 use std::time::SystemTime;
@@ -18,9 +22,13 @@ use std::time::SystemTime;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlatformMetadata {
     /// Bytes the entry actually occupies on disk (after sparse-file holes,
-    /// block alignment, etc.). On Windows this currently falls back to the
-    /// logical size.
-    pub allocated_bytes: u64,
+    /// block alignment, etc.). `None` on platforms where this can't be
+    /// derived from a `std::fs::Metadata` alone — specifically Windows,
+    /// which needs a separate `GetCompressedFileSize`/`FILE_STANDARD_INFO`
+    /// call to know the real allocation. The view layer renders `None`
+    /// as `"n/a"` and the sort key sinks `None`-rows to the bottom in
+    /// both directions.
+    pub allocated_bytes: Option<u64>,
     /// Last modification time, if the OS reported one.
     pub mtime: Option<SystemTime>,
     /// Display name of the owning user, if resolvable. `None` on Windows
@@ -53,7 +61,7 @@ fn extract_impl(md: &Metadata) -> PlatformMetadata {
     };
 
     PlatformMetadata {
-        allocated_bytes: md.blocks().saturating_mul(512),
+        allocated_bytes: Some(md.blocks().saturating_mul(512)),
         mtime: md.modified().ok(),
         owner,
     }
@@ -62,7 +70,13 @@ fn extract_impl(md: &Metadata) -> PlatformMetadata {
 #[cfg(windows)]
 fn extract_impl(md: &Metadata) -> PlatformMetadata {
     PlatformMetadata {
-        allocated_bytes: md.len(),
+        // Deliberately `None`, not `md.len()`. Reporting the logical size
+        // here would silently masquerade as "allocated" in the Allocated
+        // column, which is exactly the divergence we don't want. A real
+        // `GetCompressedFileSize` / `FILE_STANDARD_INFO` lookup will land
+        // with the Windows on-disk-size task; until then `None` makes
+        // the unknown-ness explicit at every UI surface.
+        allocated_bytes: None,
         mtime: md.modified().ok(),
         owner: None,
     }
@@ -71,7 +85,9 @@ fn extract_impl(md: &Metadata) -> PlatformMetadata {
 #[cfg(not(any(unix, windows)))]
 fn extract_impl(md: &Metadata) -> PlatformMetadata {
     PlatformMetadata {
-        allocated_bytes: md.len(),
+        // Same reasoning as the Windows branch: don't pretend logical
+        // size is allocated size on platforms we haven't characterised.
+        allocated_bytes: None,
         mtime: md.modified().ok(),
         owner: None,
     }
@@ -107,13 +123,29 @@ mod tests {
             std::fs::write(&path, b"x").expect("write");
             let md = std::fs::metadata(&path).expect("metadata");
             let pm = extract(&md);
+            let alloc = pm
+                .allocated_bytes
+                .expect("unix branch always returns Some(blocks*512)");
             assert!(
-                pm.allocated_bytes >= md.len(),
-                "allocated_bytes ({}) should be >= logical ({})",
-                pm.allocated_bytes,
+                alloc >= md.len(),
+                "allocated_bytes ({alloc}) should be >= logical ({})",
                 md.len()
             );
         }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn allocated_bytes_is_none_on_windows() {
+        // The current Windows branch deliberately returns None until a
+        // real GetCompressedFileSize lookup lands. This guards against
+        // someone "fixing" it by dropping md.len() back in.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("hello.bin");
+        std::fs::write(&path, b"hello").expect("write");
+        let md = std::fs::metadata(&path).expect("metadata");
+        let pm = extract(&md);
+        assert_eq!(pm.allocated_bytes, None);
     }
 
     #[test]

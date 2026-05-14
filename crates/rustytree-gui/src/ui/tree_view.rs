@@ -175,7 +175,7 @@ fn render_row(
                             render_percent_cell(ui, node.size_total, root_total, width);
                         }
                         ColumnKind::Allocated => {
-                            ui.label(format::bytes(node.alloc_total));
+                            ui.label(format::bytes_opt(node.alloc_total));
                         }
                         ColumnKind::FileCount => {
                             ui.label(format!("{}", node.file_count));

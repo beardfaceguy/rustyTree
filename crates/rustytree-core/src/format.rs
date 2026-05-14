@@ -11,6 +11,18 @@ pub fn bytes(n: u64) -> String {
     format_size(n, BINARY)
 }
 
+/// Format an optional byte count: `Some(n)` falls through to [`bytes`],
+/// `None` becomes the literal string `"n/a"`. Used for columns whose
+/// value isn't reliably computable on every platform — most commonly
+/// the Allocated column on Windows, which can't yet derive a real
+/// on-disk size from a `std::fs::Metadata`.
+pub fn bytes_opt(n: Option<u64>) -> String {
+    match n {
+        Some(b) => bytes(b),
+        None => "n/a".to_string(),
+    }
+}
+
 /// Format a fraction in `[0.0, 1.0]` as a percent with one decimal place.
 /// Out-of-range values are clamped.
 pub fn percent(fraction: f32) -> String {
@@ -51,6 +63,13 @@ mod tests {
         assert_eq!(bytes(0), "0 B");
         assert_eq!(bytes(1024), "1 KiB");
         assert_eq!(bytes(1024 * 1024), "1 MiB");
+    }
+
+    #[test]
+    fn bytes_opt_renders_some_like_bytes_and_none_as_na() {
+        assert_eq!(bytes_opt(Some(1024)), "1 KiB");
+        assert_eq!(bytes_opt(Some(0)), "0 B");
+        assert_eq!(bytes_opt(None), "n/a");
     }
 
     #[test]

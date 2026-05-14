@@ -48,10 +48,17 @@ pub struct Node {
     /// Logical bytes for this entry plus all descendants. Populated by
     /// [`Tree::aggregate`].
     pub size_total: u64,
-    /// On-disk allocated bytes for this entry alone.
-    pub alloc_self: u64,
-    /// Allocated bytes for this entry plus all descendants.
-    pub alloc_total: u64,
+    /// On-disk allocated bytes for this entry alone. `None` means the
+    /// platform couldn't tell us — most commonly Windows files prior to
+    /// the `GetCompressedFileSize` integration. Directories always
+    /// report `Some(0)` (they don't contribute allocation themselves;
+    /// their children do).
+    pub alloc_self: Option<u64>,
+    /// Allocated bytes for this entry plus all descendants. `None` if
+    /// any descendant (or this entry itself) has `alloc_self == None`,
+    /// which signals that the total is incomplete and shouldn't be
+    /// trusted as a real on-disk number.
+    pub alloc_total: Option<u64>,
     /// Number of file descendants (does not count the node itself, even if
     /// it is a file). Populated by [`Tree::aggregate`].
     pub file_count: u64,
@@ -70,7 +77,7 @@ impl Node {
         name: impl Into<String>,
         kind: NodeKind,
         size_self: u64,
-        alloc_self: u64,
+        alloc_self: Option<u64>,
         mtime: Option<SystemTime>,
         owner: Option<String>,
     ) -> Self {
@@ -227,7 +234,12 @@ impl Tree {
         for id in order {
             let idx = id.0 as usize;
             let mut size_total = self.nodes[idx].size_self;
-            let mut alloc_total = self.nodes[idx].alloc_self;
+            // alloc_total propagates `None` from any descendant: if we
+            // can't trust this entry's own allocation OR any child's
+            // total, the rolled-up total is also untrustworthy. Once
+            // we've seen a `None` for this subtree we stop trying to
+            // sum, since the answer is already "n/a".
+            let mut alloc_total: Option<u64> = self.nodes[idx].alloc_self;
             let mut file_count = 0u64;
             let mut dir_count = 0u64;
             // Snapshot child ids first so we can borrow `self.nodes` immutably
@@ -236,7 +248,10 @@ impl Tree {
             for child_id in child_ids {
                 let child = &self.nodes[child_id.0 as usize];
                 size_total = size_total.saturating_add(child.size_total);
-                alloc_total = alloc_total.saturating_add(child.alloc_total);
+                alloc_total = match (alloc_total, child.alloc_total) {
+                    (Some(a), Some(b)) => Some(a.saturating_add(b)),
+                    _ => None,
+                };
                 file_count = file_count.saturating_add(child.file_count);
                 dir_count = dir_count.saturating_add(child.dir_count);
                 match child.kind {
@@ -305,11 +320,11 @@ mod tests {
     use super::*;
 
     fn dir(name: &str) -> Node {
-        Node::new_leaf(name, NodeKind::Dir, 0, 0, None, None)
+        Node::new_leaf(name, NodeKind::Dir, 0, Some(0), None, None)
     }
 
     fn file(name: &str, size: u64) -> Node {
-        Node::new_leaf(name, NodeKind::File, size, size, None, None)
+        Node::new_leaf(name, NodeKind::File, size, Some(size), None, None)
     }
 
     /// Build:
@@ -359,6 +374,70 @@ mod tests {
         let a_node = t.get(a).unwrap();
         assert_eq!(a_node.file_count, 2);
         assert_eq!(a_node.dir_count, 0);
+    }
+
+    #[test]
+    fn aggregate_alloc_total_propagates_none_from_any_descendant() {
+        // Build a tree where one file in the `b` subtree has unknown
+        // allocated size (mirroring the Windows path until
+        // GetCompressedFileSize lands). The root's `alloc_total` must
+        // come back as None — we don't know the real total, so we don't
+        // get to fake it.
+        let mut t = Tree::new();
+        let root = t
+            .insert(
+                None,
+                Node::new_leaf("root", NodeKind::Dir, 0, Some(0), None, None),
+            )
+            .unwrap();
+        let a = t
+            .insert(
+                Some(root),
+                Node::new_leaf("a", NodeKind::Dir, 0, Some(0), None, None),
+            )
+            .unwrap();
+        t.insert(
+            Some(a),
+            Node::new_leaf("a1", NodeKind::File, 100, Some(4096), None, None),
+        )
+        .unwrap();
+        let b = t
+            .insert(
+                Some(root),
+                Node::new_leaf("b", NodeKind::Dir, 0, Some(0), None, None),
+            )
+            .unwrap();
+        // `b1`'s alloc_self is None — Windows-style.
+        t.insert(
+            Some(b),
+            Node::new_leaf("b1_unknown", NodeKind::File, 50, None, None, None),
+        )
+        .unwrap();
+        t.aggregate();
+
+        // a's totals are knowable; b's totals are not; root's totals
+        // therefore aren't either.
+        let a_total = t.get(a).unwrap().alloc_total;
+        let b_total = t.get(b).unwrap().alloc_total;
+        let root_total = t.get(root).unwrap().alloc_total;
+        assert_eq!(a_total, Some(4096));
+        assert_eq!(b_total, None);
+        assert_eq!(root_total, None);
+    }
+
+    #[test]
+    fn aggregate_alloc_total_sums_when_every_descendant_known() {
+        // Sanity-check the happy path: every leaf has Some, so the
+        // root's total is the sum.
+        let mut t = sample_tree();
+        t.aggregate();
+        let root = t.root().unwrap();
+        // sample_tree files are 100 + 200 + 50 + 1000; with `Some(size)`
+        // for alloc_self the total matches the logical total.
+        assert_eq!(
+            t.get(root).unwrap().alloc_total,
+            Some(100 + 200 + 50 + 1000)
+        );
     }
 
     #[test]

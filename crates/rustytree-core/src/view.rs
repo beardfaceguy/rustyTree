@@ -259,15 +259,17 @@ pub fn sort_children(children: &mut [NodeId], tree: &Tree, key: SortKey, dir: So
         };
         let ord = match key {
             SortKey::Size => na.size_total.cmp(&nb.size_total),
-            SortKey::Allocated => na.alloc_total.cmp(&nb.alloc_total),
             SortKey::Name => na.name.to_lowercase().cmp(&nb.name.to_lowercase()),
             SortKey::FileCount => na.file_count.cmp(&nb.file_count),
             SortKey::DirCount => na.dir_count.cmp(&nb.dir_count),
-            // Mtime/Owner are optional; rows without a value should always
-            // sort to the bottom regardless of direction. The naive
-            // `Option::cmp` orders `None < Some(_)`, which means flipping
-            // direction floats unknown rows to the top — rarely what users
-            // want when sorting.
+            // Allocated/Mtime/Owner are optional; rows without a value
+            // should always sort to the bottom regardless of direction.
+            // The naive `Option::cmp` orders `None < Some(_)`, which means
+            // flipping direction floats unknown rows to the top — rarely
+            // what users want when sorting.
+            SortKey::Allocated => {
+                return cmp_option_none_last(&na.alloc_total, &nb.alloc_total, dir);
+            }
             SortKey::Mtime => return cmp_option_none_last(&na.mtime, &nb.mtime, dir),
             SortKey::Owner => return cmp_option_none_last(&na.owner, &nb.owner, dir),
         };
@@ -329,10 +331,10 @@ mod tests {
     use crate::scan::{Node, NodeKind};
 
     fn dir(name: &str) -> Node {
-        Node::new_leaf(name, NodeKind::Dir, 0, 0, None, None)
+        Node::new_leaf(name, NodeKind::Dir, 0, Some(0), None, None)
     }
     fn file(name: &str, size: u64) -> Node {
-        Node::new_leaf(name, NodeKind::File, size, size, None, None)
+        Node::new_leaf(name, NodeKind::File, size, Some(size), None, None)
     }
 
     fn sample() -> Tree {
@@ -580,7 +582,7 @@ mod tests {
                 "older",
                 NodeKind::File,
                 10,
-                10,
+                Some(10),
                 Some(UNIX_EPOCH + Duration::from_secs(1_000_000)),
                 None,
             ),
@@ -593,7 +595,7 @@ mod tests {
                 "newer",
                 NodeKind::File,
                 10,
-                10,
+                Some(10),
                 Some(UNIX_EPOCH + Duration::from_secs(2_000_000)),
                 None,
             ),
@@ -603,7 +605,7 @@ mod tests {
         // bottom under Desc; should now stay at the bottom in both.
         t.insert(
             Some(r),
-            Node::new_leaf("unknown", NodeKind::File, 10, 10, None, None),
+            Node::new_leaf("unknown", NodeKind::File, 10, Some(10), None, None),
         )
         .unwrap();
         t.aggregate();
@@ -657,7 +659,7 @@ mod tests {
                 "alice_file",
                 NodeKind::File,
                 10,
-                10,
+                Some(10),
                 None,
                 Some("alice".into()),
             ),
@@ -665,12 +667,19 @@ mod tests {
         .unwrap();
         t.insert(
             Some(r),
-            Node::new_leaf("bob_file", NodeKind::File, 10, 10, None, Some("bob".into())),
+            Node::new_leaf(
+                "bob_file",
+                NodeKind::File,
+                10,
+                Some(10),
+                None,
+                Some("bob".into()),
+            ),
         )
         .unwrap();
         t.insert(
             Some(r),
-            Node::new_leaf("noowner_file", NodeKind::File, 10, 10, None, None),
+            Node::new_leaf("noowner_file", NodeKind::File, 10, Some(10), None, None),
         )
         .unwrap();
         t.aggregate();
