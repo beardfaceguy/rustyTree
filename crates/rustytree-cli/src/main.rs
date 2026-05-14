@@ -8,7 +8,7 @@ mod ui;
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
@@ -61,42 +61,54 @@ impl Drop for TerminalGuard {
     }
 }
 
-/// Main loop: poll for input, drain scan events, redraw. Runs until the
-/// app reports [`Action::Quit`] or the terminal returns an error.
+/// Main loop: poll for input, drain scan events, redraw only when
+/// something changed. Runs until the app reports [`Action::Quit`] or
+/// the terminal returns an error.
+///
+/// The loop tracks a `dirty` flag fed by three sources:
+/// 1. Scan-event drain (`poll_scan` returns `true` when it advanced
+///    state).
+/// 2. Key dispatch (`on_key` returns `Action::Redraw` for recognised
+///    keys; `Action::Ignore` for unbound ones).
+/// 3. Initial mount (first frame is always drawn).
+///
+/// The previous implementation redrew on every loop iteration at the
+/// poll timeout (~20fps). That's wasteful: on an idle UI it produced
+/// hundreds of identical frames per minute, and on slow terminals it
+/// caused noticeable flicker. Drawing only when state changes is
+/// cheaper and visually quieter.
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut RustyTreeApp) -> Result<()> {
     // Initial draw before we block on input so the user sees the welcome
     // screen immediately.
     terminal.draw(|f| ui::render(f, app))?;
 
-    let tick_rate = Duration::from_millis(50);
-    let mut last_tick = Instant::now();
+    // Poll cap. Acts as a backstop so `event::poll` doesn't sit forever
+    // when no keys are being pressed, which would also leave queued
+    // scan events undrained. 50ms ≈ 20Hz, which is plenty for live
+    // progress without burning idle CPU.
+    let poll_timeout = Duration::from_millis(50);
 
     loop {
-        // Pull whatever is on the scan channel before polling input so any
-        // progress events show up on the next redraw.
-        app.poll_scan();
+        let scan_dirty = app.poll_scan();
 
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_default();
+        let mut redraw = scan_dirty;
 
-        if event::poll(timeout).context("event::poll")? {
+        if event::poll(poll_timeout).context("event::poll")? {
             let ev = event::read().context("event::read")?;
             if let Event::Key(key) = ev
                 && key.kind == event::KeyEventKind::Press
             {
                 match app.on_key(key) {
                     Action::Quit => return Ok(()),
-                    Action::None => {}
+                    Action::Redraw => redraw = true,
+                    Action::Ignore => {}
                 }
             }
             // Mouse events ignored for MVP.
         }
 
-        if last_tick.elapsed() >= tick_rate {
-            last_tick = Instant::now();
+        if redraw {
+            terminal.draw(|f| ui::render(f, app))?;
         }
-
-        terminal.draw(|f| ui::render(f, app))?;
     }
 }

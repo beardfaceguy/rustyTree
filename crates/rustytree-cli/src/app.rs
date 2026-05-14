@@ -36,10 +36,18 @@ pub enum Mode {
 }
 
 /// Result of dispatching a key. The event loop uses this to decide
-/// whether to keep running.
+/// whether to keep running and whether the next frame needs to be
+/// redrawn. `Ignore` is returned for keys that don't map to any
+/// command (e.g. unbound letters in normal mode); the loop uses it
+/// to skip the redraw, which is the whole point of the dirty-flag
+/// scheme — most idle keystrokes shouldn't repaint the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    None,
+    /// Key was recognised; state may have changed; redraw.
+    Redraw,
+    /// Key wasn't bound; no state change; skip redraw.
+    Ignore,
+    /// Quit the loop.
     Quit,
 }
 
@@ -96,15 +104,23 @@ impl RustyTreeApp {
         }
     }
 
-    /// Drain pending scan events.
-    pub fn poll_scan(&mut self) {
+    /// Drain pending scan events. Returns `true` if anything observable
+    /// changed (progress tick, scan completion, cancellation, or
+    /// disconnect), so the event loop only redraws when there's something
+    /// new to show. A no-op call (no scan in flight, or no events
+    /// queued) returns `false`.
+    pub fn poll_scan(&mut self) -> bool {
+        let mut dirty = false;
         loop {
             let recv = match self.scan.as_ref() {
                 Some(h) => h.try_recv(),
-                None => return,
+                None => return dirty,
             };
             match recv {
-                Ok(ScanEvent::Progress(p)) => self.ui.last_progress = Some(p),
+                Ok(ScanEvent::Progress(p)) => {
+                    self.ui.last_progress = Some(p);
+                    dirty = true;
+                }
                 Ok(ScanEvent::Done { tree, elapsed }) => {
                     let root = tree.root();
                     let (total_bytes, file_count, dir_count) = root
@@ -126,14 +142,17 @@ impl RustyTreeApp {
                     self.ui.rows_dirty = true;
                     self.scroll_offset = 0;
                     self.scan = None;
+                    dirty = true;
                 }
                 Ok(ScanEvent::Cancelled) => {
                     self.status = Status::Cancelled;
                     self.scan = None;
+                    dirty = true;
                 }
                 Ok(ScanEvent::Error(e)) => {
                     self.status = Status::Error(format!("{e}"));
                     self.scan = None;
+                    dirty = true;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -141,6 +160,7 @@ impl RustyTreeApp {
                         self.status = Status::Error(
                             "scan worker disconnected before reporting completion".into(),
                         );
+                        dirty = true;
                     }
                     self.scan = None;
                     break;
@@ -154,16 +174,20 @@ impl RustyTreeApp {
             rebuild_visible_rows(tree, &mut self.ui);
             self.ui.rows_dirty = false;
             self.clamp_selection();
+            dirty = true;
         }
+        dirty
     }
 
     /// Top-level key handler. Returns the resulting [`Action`] for the
-    /// event loop.
+    /// event loop. Unbound keys yield [`Action::Ignore`] so the main
+    /// loop can skip its redraw — random keystrokes shouldn't cause
+    /// the terminal to repaint.
     pub fn on_key(&mut self, key: KeyEvent) -> Action {
         if let Some(cmd) = key_to_command(key, self.mode) {
             self.dispatch(cmd)
         } else {
-            Action::None
+            Action::Ignore
         }
     }
 
@@ -237,7 +261,7 @@ impl RustyTreeApp {
             self.ui.rows_dirty = false;
             self.clamp_selection();
         }
-        Action::None
+        Action::Redraw
     }
 
     fn start_scan(&mut self) {
@@ -523,6 +547,39 @@ mod tests {
     #[test]
     fn dispatch_quit_returns_quit_action() {
         let mut app = RustyTreeApp::new(PathBuf::from("/tmp"));
+        // Quit short-circuits before reaching Action::Redraw at the
+        // bottom of dispatch, so the test stays correct under the new
+        // Action enum.
         assert_eq!(app.dispatch(Command::Quit), Action::Quit);
+    }
+
+    #[test]
+    fn unbound_key_returns_ignore_so_loop_skips_redraw() {
+        // The whole point of the dirty-flag scheme is that random
+        // keystrokes don't trigger a redraw. Pick a key that the
+        // normal-mode keymap doesn't handle (PageDown maps to a
+        // Move command — use F1 instead, which is unmapped) and
+        // assert it lands as Ignore.
+        let mut app = RustyTreeApp::new(PathBuf::from("/tmp"));
+        let f1 = KeyEvent::new(KeyCode::F(1), KeyModifiers::empty());
+        assert_eq!(app.on_key(f1), Action::Ignore);
+    }
+
+    #[test]
+    fn bound_key_returns_redraw() {
+        // A key that DOES map to a command should yield Redraw, so
+        // the loop knows the next frame is worth painting. ToggleHelp
+        // is a low-side-effect choice.
+        let mut app = RustyTreeApp::new(PathBuf::from("/tmp"));
+        let q_mark = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::empty());
+        assert_eq!(app.on_key(q_mark), Action::Redraw);
+    }
+
+    #[test]
+    fn poll_scan_returns_false_when_no_scan_in_flight() {
+        // No scan started yet → nothing to drain → loop should be
+        // free to skip the redraw.
+        let mut app = RustyTreeApp::new(PathBuf::from("/tmp"));
+        assert!(!app.poll_scan());
     }
 }
