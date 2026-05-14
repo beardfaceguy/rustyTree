@@ -1,0 +1,8 @@
+# Pin the toolchain so a new rustfmt/clippy release can't silently break
+# the workspace without a code change. Bump deliberately, alongside a
+# `cargo fmt --all` + `cargo clippy --workspace --all-targets -- -D warnings`
+# run, when we want to adopt newer lints.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
