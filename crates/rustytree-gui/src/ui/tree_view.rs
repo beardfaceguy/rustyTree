@@ -35,8 +35,16 @@ pub fn render(app: &mut RustyTreeApp, ui: &mut egui::Ui) {
     render_header(state, ui);
     ui.separator();
 
-    let rows = state.visible_rows.clone();
-    let total_rows = rows.len();
+    // Snapshot only the row count for `show_rows`. `RowEntry` is
+    // `Copy`, so the closure body indexes `state.visible_rows[i]`
+    // directly per visible row instead of cloning the whole `Vec`
+    // upfront. With a million-entry tree the previous per-frame
+    // `state.visible_rows.clone()` allocated and freed several MiB
+    // every redraw — visible as steady GC-style hitching on
+    // mid-range hardware. Indexing keeps each frame O(visible_rows)
+    // copies-of-RowEntry-by-value (which is just two `u64`s under
+    // the hood).
+    let total_rows = state.visible_rows.len();
     let root_total = tree
         .root()
         .and_then(|r| tree.get(r))
@@ -47,7 +55,16 @@ pub fn render(app: &mut RustyTreeApp, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, total_rows, |ui, range| {
             for row_idx in range {
-                let row = rows[row_idx];
+                // `state.visible_rows` may have shrunk between the
+                // `show_rows` outer call and this iteration if the
+                // user just toggled expansion (which sets
+                // `rows_dirty = true` for the *next* frame, but the
+                // current frame's `total_rows` was captured before).
+                // Bail safely on out-of-range rather than indexing
+                // and panicking.
+                let Some(&row) = state.visible_rows.get(row_idx) else {
+                    break;
+                };
                 let mut clicked_chevron = false;
                 let mut clicked_row = false;
                 render_row(
