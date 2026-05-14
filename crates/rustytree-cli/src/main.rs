@@ -1,10 +1,9 @@
 //! Entry point + terminal lifecycle for `rustytree-cli`.
 //!
-//! Owns the alternate-screen / raw-mode dance and the main event loop;
-//! all state and rendering live in [`app`] and [`ui`].
-
-mod app;
-mod ui;
+//! Owns the alternate-screen / raw-mode dance and the main event loop.
+//! All state and rendering live in the sibling `lib.rs` (`app` and
+//! `ui` modules) so the integration tests can drive them without a
+//! real terminal.
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
@@ -19,7 +18,8 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{Action, RustyTreeApp};
+use rustytree_cli::app::{Action, RustyTreeApp};
+use rustytree_cli::ui;
 
 fn main() -> Result<()> {
     let path = std::env::args()

@@ -2890,6 +2890,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "rustytree-core",
+ "tempfile",
 ]
 
 [[package]]

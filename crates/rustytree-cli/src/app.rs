@@ -109,12 +109,29 @@ impl RustyTreeApp {
     /// disconnect), so the event loop only redraws when there's something
     /// new to show. A no-op call (no scan in flight, or no events
     /// queued) returns `false`.
+    ///
+    /// Important: when `self.scan` becomes `None` mid-loop (the
+    /// `Done`/`Cancelled`/`Error`/`Disconnected` arms all clear it),
+    /// we `break` out instead of `return`-ing so the rebuild block
+    /// at the bottom still runs. Returning early there used to leave
+    /// `visible_rows` empty until the user pressed any key that
+    /// re-set `rows_dirty`, which manifested as "the tree shows up
+    /// only after I press something" — a regression caught by the
+    /// CLI integration tests in `tests/`.
     pub fn poll_scan(&mut self) -> bool {
         let mut dirty = false;
+        // clippy::while_let_loop suggests rewriting this as
+        // `while let Some(h) = self.scan.as_ref() { ... }`, which
+        // doesn't compile here: the match arms below mutate
+        // `self.scan` (setting it to `None` on Done/Cancelled/etc.),
+        // which conflicts with the immutable borrow `while let` would
+        // hold across the body. The current `loop`/`match`/`break`
+        // shape is the right tool — the borrow ends with `recv`.
+        #[allow(clippy::while_let_loop)]
         loop {
             let recv = match self.scan.as_ref() {
                 Some(h) => h.try_recv(),
-                None => return dirty,
+                None => break,
             };
             match recv {
                 Ok(ScanEvent::Progress(p)) => {

@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "Interactive terminal UI front-end for rustyTree (ratatui + crossterm)."
 
+[lib]
+name = "rustytree_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rustytree-cli"
 path = "src/main.rs"
@@ -15,3 +19,6 @@ anyhow = "1.0.102"
 crossterm = "0.29.0"
 ratatui = "0.30.0"
 rustytree-core = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
