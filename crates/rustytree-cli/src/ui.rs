@@ -257,13 +257,17 @@ fn format_name_cell(node: &Node, depth: u16, chevron: &'static str, width: usize
     let indent: String = "  ".repeat(depth as usize);
     let prefix_len = indent.chars().count() + chevron.chars().count();
     let max_name = width.saturating_sub(prefix_len);
-    let name_chars = node.name.chars().count();
+    let name_chars = node.name().chars().count();
     let name = if name_chars > max_name && max_name >= 1 {
-        let mut truncated: String = node.name.chars().take(max_name.saturating_sub(1)).collect();
+        let mut truncated: String = node
+            .name()
+            .chars()
+            .take(max_name.saturating_sub(1))
+            .collect();
         truncated.push('\u{2026}');
         truncated
     } else {
-        node.name.clone()
+        node.name().to_string()
     };
     let combined = format!("{indent}{chevron}{name}");
     pad_to_width(&combined, width, ColumnKind::Name)

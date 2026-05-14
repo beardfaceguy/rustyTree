@@ -309,6 +309,15 @@ fn cmp_option_none_last<T: Ord>(a: &Option<T>, b: &Option<T>, dir: SortDir) -> s
 /// on `Node::name_lower` for the haystack. That asymmetry is intentional:
 /// it lets us avoid re-lowercasing every node's name on every keystroke.
 fn compute_subtree_matches(tree: &Tree, needle: &str) -> HashSet<NodeId> {
+    // Defend the contract in debug builds: a future caller that
+    // forgets to lowercase the needle would otherwise produce a
+    // silent "search returns nothing" bug, since `name_lower` only
+    // ever matches lowercased input.
+    debug_assert_eq!(
+        needle,
+        needle.to_lowercase(),
+        "compute_subtree_matches: needle must be pre-lowercased",
+    );
     let mut hits: HashSet<NodeId> = HashSet::new();
     for id in tree.iter_ids() {
         if let Some(n) = tree.get(id)

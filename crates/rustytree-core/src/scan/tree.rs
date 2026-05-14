@@ -40,7 +40,15 @@ pub enum NodeKind {
 pub struct Node {
     /// File or directory name (basename only). The root holds the original
     /// scan path's display string.
-    pub name: String,
+    ///
+    /// Treat as effectively immutable after construction: [`Node::name_lower`]
+    /// is a precomputed, lowercased copy of this string, and the
+    /// view-layer hot paths trust the two fields to stay in sync. If
+    /// you ever need to mutate the name post-construction, rebuild the
+    /// `Node` (or add a setter that updates both fields together)
+    /// rather than poking `name` directly. Both fields are
+    /// `pub(crate)` so external crates can't accidentally desync them.
+    pub(crate) name: String,
     /// Lowercased copy of `name`, computed once at construction. Used by
     /// the view layer's case-insensitive sort and search hot paths so
     /// they don't re-allocate a fresh `String` for every comparison
@@ -48,8 +56,10 @@ pub struct Node {
     /// node at scan time (already dominated by the `String::from`
     /// for `name` itself); the win is N×log(N) allocations avoided
     /// per Name-column sort and N allocations avoided per search
-    /// rebuild.
-    pub name_lower: String,
+    /// rebuild. Kept `pub(crate)` because it's an internal cache:
+    /// external crates should read [`Node::name`] (via the accessor)
+    /// instead of depending on the precomputed-lowercase representation.
+    pub(crate) name_lower: String,
     pub kind: NodeKind,
     /// Logical bytes contributed by this entry alone (file length, or zero
     /// for directories and symlinks).
@@ -80,6 +90,15 @@ pub struct Node {
 }
 
 impl Node {
+    /// Display name (basename for non-root nodes, full scan path for the
+    /// root). The backing field is `pub(crate)` so external crates go
+    /// through this accessor — that lets us preserve the
+    /// `name`/`name_lower` invariant without giving callers a way to
+    /// desync them.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// Build a leaf-style node (no children, totals == self values). The
     /// walker uses this and then attaches the node via [`Tree::insert`].
     pub fn new_leaf(

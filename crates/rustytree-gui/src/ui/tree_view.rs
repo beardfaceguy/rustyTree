@@ -221,7 +221,7 @@ fn render_name_cell(
     }
 
     let remaining = (width - indent - 24.0).max(40.0);
-    let label = egui::Label::new(node.name.clone()).truncate();
+    let label = egui::Label::new(node.name().to_string()).truncate();
     ui.allocate_ui_with_layout(
         egui::vec2(remaining, ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
