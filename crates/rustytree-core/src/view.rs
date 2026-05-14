@@ -148,12 +148,18 @@ pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> Str
     match status {
         Status::Idle => "ready".into(),
         Status::Scanning => match last_progress {
-            Some(p) => format!(
-                "scanning... {} entries, {} so far ({})",
-                p.entries,
-                format::bytes(p.bytes),
-                p.current_path.display()
-            ),
+            Some(p) => {
+                let mut s = format!(
+                    "scanning... {} entries, {} so far ({})",
+                    p.entries,
+                    format::bytes(p.bytes),
+                    p.current_path.display()
+                );
+                if p.errors > 0 {
+                    s.push_str(&format!(" — {} skipped (i/o errors)", p.errors));
+                }
+                s
+            }
             None => "scanning...".into(),
         },
         Status::Done {
@@ -161,13 +167,25 @@ pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> Str
             total_bytes,
             file_count,
             dir_count,
-        } => format!(
-            "done in {} | {} | {} files, {} dirs",
-            format::elapsed(*elapsed),
-            format::bytes(*total_bytes),
-            file_count,
-            dir_count
-        ),
+        } => {
+            let base = format!(
+                "done in {} | {} | {} files, {} dirs",
+                format::elapsed(*elapsed),
+                format::bytes(*total_bytes),
+                file_count,
+                dir_count
+            );
+            // Surface skipped-entry count from the most recent progress
+            // tick so the user can tell the totals are partial. The
+            // walker keeps `errors` monotonic so the last-seen value is
+            // the final count.
+            match last_progress {
+                Some(p) if p.errors > 0 => {
+                    format!("{base} — {} skipped (i/o errors)", p.errors)
+                }
+                _ => base,
+            }
+        }
         Status::Cancelled => "cancelled".into(),
         Status::Error(e) => format!("error: {e}"),
     }
@@ -461,6 +479,53 @@ mod tests {
         assert!(set.contains(&root));
         assert!(!toggle_expand(&mut set, root)); // now collapsed
         assert!(!set.contains(&root));
+    }
+
+    #[test]
+    fn status_line_surfaces_skipped_entries_while_scanning() {
+        use std::path::PathBuf;
+        let progress = ScanProgress {
+            entries: 100,
+            bytes: 4096,
+            errors: 7,
+            current_path: PathBuf::from("/tmp/x"),
+        };
+        let s = status_line(&Status::Scanning, Some(&progress));
+        assert!(s.contains("100 entries"), "got {s:?}");
+        assert!(s.contains("7 skipped"), "got {s:?}");
+    }
+
+    #[test]
+    fn status_line_surfaces_skipped_entries_in_done_state() {
+        use std::path::PathBuf;
+        use std::time::Duration;
+        let progress = ScanProgress {
+            entries: 100,
+            bytes: 4096,
+            errors: 3,
+            current_path: PathBuf::from("/tmp/x"),
+        };
+        let done = Status::Done {
+            elapsed: Duration::from_millis(420),
+            total_bytes: 4096,
+            file_count: 90,
+            dir_count: 7,
+        };
+        let s = status_line(&done, Some(&progress));
+        assert!(s.contains("3 skipped"), "got {s:?}");
+    }
+
+    #[test]
+    fn status_line_omits_skipped_text_when_no_errors() {
+        use std::path::PathBuf;
+        let progress = ScanProgress {
+            entries: 100,
+            bytes: 4096,
+            errors: 0,
+            current_path: PathBuf::from("/tmp/x"),
+        };
+        let s = status_line(&Status::Scanning, Some(&progress));
+        assert!(!s.contains("skipped"), "got {s:?}");
     }
 
     #[test]

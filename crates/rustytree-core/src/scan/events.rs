@@ -22,6 +22,12 @@ use super::walker;
 pub struct ScanProgress {
     pub entries: u64,
     pub bytes: u64,
+    /// Cumulative count of filesystem entries the walker had to skip
+    /// because of an I/O error (typically `EACCES` on a subdirectory or
+    /// `ENOENT` after a TOCTOU race). The walker keeps going on these
+    /// — they don't fail the whole scan — but the UI surfaces the
+    /// count so the user knows the totals are partial.
+    pub errors: u64,
     pub current_path: PathBuf,
 }
 
