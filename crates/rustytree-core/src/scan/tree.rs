@@ -105,8 +105,22 @@ impl Tree {
 
     /// Add a node to the arena. Pass `parent = None` to set the root (only
     /// allowed once; subsequent calls with `None` parent are rejected).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the arena would grow past `u32::MAX` nodes (~4.29 B) —
+    /// `NodeId` is internally a `u32` and silently truncating would alias
+    /// every new node onto the existing root, corrupting the tree. In any
+    /// realistic scan this is unreachable: a `Node` is well over 64 bytes,
+    /// so an overflow would require >256 GB of in-memory tree state. The
+    /// panic exists purely as a defensive fail-fast guard.
     pub fn insert(&mut self, parent: Option<NodeId>, mut node: Node) -> NodeId {
-        let id = NodeId(self.nodes.len() as u32);
+        let next_index = self.nodes.len();
+        assert!(
+            next_index < u32::MAX as usize,
+            "Tree arena cannot exceed u32::MAX nodes (NodeId is a u32)"
+        );
+        let id = NodeId(next_index as u32);
         node.parent = parent;
         self.nodes.push(node);
         match parent {
@@ -146,6 +160,9 @@ impl Tree {
 
     /// Iterate over every node id in the order it was inserted.
     pub fn iter_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        // Safe by construction: `Tree::insert` rejects insertions that
+        // would push `nodes.len()` past `u32::MAX`, so the cast can never
+        // truncate.
         (0..self.nodes.len() as u32).map(NodeId)
     }
 
