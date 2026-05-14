@@ -67,26 +67,19 @@ fn extract_impl(md: &Metadata) -> PlatformMetadata {
     }
 }
 
-#[cfg(windows)]
+// One impl for every non-unix platform (Windows today, plus anything
+// exotic like wasi/redox that we haven't characterised). They all share
+// the same "we can't derive on-disk size from std::fs::Metadata alone"
+// constraint, so they all return `None` for `allocated_bytes`. Reporting
+// `md.len()` here would silently masquerade as "allocated" in the
+// Allocated column — exactly the divergence we don't want. A real
+// `GetCompressedFileSize` / `FILE_STANDARD_INFO` lookup will land with
+// the Windows on-disk-size task; until then `None` makes the
+// unknown-ness explicit at every UI surface, and the test below
+// exercises this branch on whichever non-unix host CI is running on.
+#[cfg(not(unix))]
 fn extract_impl(md: &Metadata) -> PlatformMetadata {
     PlatformMetadata {
-        // Deliberately `None`, not `md.len()`. Reporting the logical size
-        // here would silently masquerade as "allocated" in the Allocated
-        // column, which is exactly the divergence we don't want. A real
-        // `GetCompressedFileSize` / `FILE_STANDARD_INFO` lookup will land
-        // with the Windows on-disk-size task; until then `None` makes
-        // the unknown-ness explicit at every UI surface.
-        allocated_bytes: None,
-        mtime: md.modified().ok(),
-        owner: None,
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn extract_impl(md: &Metadata) -> PlatformMetadata {
-    PlatformMetadata {
-        // Same reasoning as the Windows branch: don't pretend logical
-        // size is allocated size on platforms we haven't characterised.
         allocated_bytes: None,
         mtime: md.modified().ok(),
         owner: None,

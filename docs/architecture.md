@@ -176,8 +176,9 @@ pub struct Node {
     pub kind: NodeKind,             // Dir | File | Symlink
     pub size_self: u64,
     pub size_total: u64,            // populated by aggregate()
-    pub alloc_self: u64,
-    pub alloc_total: u64,           // populated by aggregate()
+    pub alloc_self: Option<u64>,    // None when the platform can't tell us
+    pub alloc_total: Option<u64>,   // populated by aggregate(); None if any
+                                    // descendant is None
     pub file_count: u64,            // descendants only
     pub dir_count: u64,             // descendants only
     pub mtime: Option<SystemTime>,

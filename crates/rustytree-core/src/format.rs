@@ -11,15 +11,21 @@ pub fn bytes(n: u64) -> String {
     format_size(n, BINARY)
 }
 
+/// Placeholder rendered in cells whose underlying value is `None` —
+/// e.g. the Allocated column on Windows until `GetCompressedFileSize`
+/// lands. Centralised so the CLI and GUI can't drift on capitalisation
+/// or wording.
+pub const NA_PLACEHOLDER: &str = "N/A";
+
 /// Format an optional byte count: `Some(n)` falls through to [`bytes`],
-/// `None` becomes the literal string `"n/a"`. Used for columns whose
-/// value isn't reliably computable on every platform — most commonly
-/// the Allocated column on Windows, which can't yet derive a real
-/// on-disk size from a `std::fs::Metadata`.
+/// `None` becomes [`NA_PLACEHOLDER`]. Used for columns whose value
+/// isn't reliably computable on every platform — most commonly the
+/// Allocated column on Windows, which can't yet derive a real on-disk
+/// size from a `std::fs::Metadata`.
 pub fn bytes_opt(n: Option<u64>) -> String {
     match n {
         Some(b) => bytes(b),
-        None => "n/a".to_string(),
+        None => NA_PLACEHOLDER.to_string(),
     }
 }
 
@@ -66,10 +72,11 @@ mod tests {
     }
 
     #[test]
-    fn bytes_opt_renders_some_like_bytes_and_none_as_na() {
+    fn bytes_opt_renders_some_like_bytes_and_none_as_placeholder() {
         assert_eq!(bytes_opt(Some(1024)), "1 KiB");
         assert_eq!(bytes_opt(Some(0)), "0 B");
-        assert_eq!(bytes_opt(None), "n/a");
+        assert_eq!(bytes_opt(None), NA_PLACEHOLDER);
+        assert_eq!(NA_PLACEHOLDER, "N/A");
     }
 
     #[test]

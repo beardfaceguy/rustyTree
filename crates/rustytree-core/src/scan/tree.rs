@@ -237,8 +237,10 @@ impl Tree {
             // alloc_total propagates `None` from any descendant: if we
             // can't trust this entry's own allocation OR any child's
             // total, the rolled-up total is also untrustworthy. Once
-            // we've seen a `None` for this subtree we stop trying to
-            // sum, since the answer is already "n/a".
+            // `alloc_total` becomes `None` it stays `None` for the rest
+            // of this node's loop — we don't bother short-circuiting
+            // because the other accumulators (size, counts) still need
+            // the same iteration.
             let mut alloc_total: Option<u64> = self.nodes[idx].alloc_self;
             let mut file_count = 0u64;
             let mut dir_count = 0u64;
