@@ -9,8 +9,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui;
-use rustytree::format;
-use rustytree::scan::{NodeId, ScanError, ScanEvent, ScanHandle, ScanProgress, Tree, start_scan};
+use rustytree_core::format;
+use rustytree_core::scan::{
+    NodeId, ScanError, ScanEvent, ScanHandle, ScanProgress, Tree, start_scan,
+};
 
 use crate::ui;
 

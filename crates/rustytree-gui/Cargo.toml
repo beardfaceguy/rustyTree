@@ -1,0 +1,22 @@
+[package]
+name = "rustytree-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "egui/eframe desktop GUI front-end for rustyTree."
+
+[[bin]]
+name = "rustytree-gui"
+path = "src/main.rs"
+
+[dependencies]
+rustytree-core = { workspace = true }
+
+eframe = { version = "0.34.2", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+rfd = "0.17.2"

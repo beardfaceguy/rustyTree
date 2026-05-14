@@ -1,0 +1,22 @@
+[package]
+name = "rustytree-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless filesystem scan engine and shared display helpers for rustyTree. No GUI/TUI dependencies."
+
+[lib]
+name = "rustytree_core"
+
+[dependencies]
+chrono = { workspace = true }
+humansize = { workspace = true }
+thiserror = { workspace = true }
+jwalk = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+uzers = "0.12.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

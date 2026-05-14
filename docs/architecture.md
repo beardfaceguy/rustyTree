@@ -8,51 +8,62 @@ For project status, current backlog, and decisions in flight see the Vikunja
 project "rustyTree" (id 66). For coding conventions and the agent
 quick-start see [`AGENTS.md`](../AGENTS.md).
 
-## Layered view
+## Workspace shape
 
-The codebase splits cleanly into three layers:
+This is a Cargo workspace. One library crate, two front-end binary crates.
+The library crate has zero GUI/TUI dependencies; each front-end depends
+only on the rendering stack it actually uses.
 
 ```mermaid
 flowchart TD
-    subgraph ui [UI layer 'binary only']
-        toolbar[ui::toolbar]
-        treeView[ui::tree_view]
-        statusBar[ui::status]
-        appShell[app::RustyTreeApp]
+    subgraph guiCrate [crate rustytree-gui]
+        guiApp[app::RustyTreeApp]
+        guiToolbar[ui::toolbar]
+        guiTree[ui::tree_view]
+        guiStatus[ui::status]
     end
 
-    subgraph scanLayer [Scan engine 'lib']
-        events[scan::events]
-        walker[scan::walker]
-        treeMod[scan::tree]
-        platform[scan::platform]
+    subgraph cliCrate [crate rustytree-cli]
+        cliApp[cli::RustyTreeApp]
+        cliWidgets[cli::widgets]
     end
 
-    subgraph fmt [Formatting 'lib']
-        format[format]
+    subgraph coreCrate [crate rustytree-core 'no GUI/TUI deps']
+        scanEvents[scan::events]
+        scanWalker[scan::walker]
+        scanTree[scan::tree]
+        scanPlatform[scan::platform]
+        fmt[format]
     end
 
-    appShell --> toolbar
-    appShell --> treeView
-    appShell --> statusBar
-    appShell --> events
+    guiApp --> scanEvents
+    guiTree --> scanTree
+    guiTree --> fmt
+    guiToolbar --> scanEvents
+    guiStatus --> fmt
 
-    toolbar --> events
-    treeView --> treeMod
-    treeView --> format
-    statusBar --> format
+    cliApp --> scanEvents
+    cliWidgets --> scanTree
+    cliWidgets --> fmt
 
-    events --> walker
-    walker --> platform
-    walker --> treeMod
+    scanEvents --> scanWalker
+    scanWalker --> scanPlatform
+    scanWalker --> scanTree
 ```
 
-- The **UI layer** lives in the binary (`src/main.rs`, `src/app.rs`,
-  `src/ui/*`) and depends on `eframe`/`egui`.
-- The **scan engine** (`src/scan/*`) and **formatting helpers**
-  (`src/format.rs`) live in the library crate. Neither pulls in any
-  GUI deps. Integration tests under `tests/` exercise the scan engine
-  directly.
+The two front-ends are interchangeable from the user's standpoint: same
+sort columns, same search semantics, same cancellation, same totals.
+Anything visible to both should live in `rustytree-core`. If you find
+yourself copying a helper between `rustytree-gui` and `rustytree-cli`, lift
+it to core instead.
+
+### Choosing a front-end
+
+| Want | Use |
+|------|-----|
+| Pointing-and-clicking on a desktop | `cargo run -p rustytree-gui` |
+| SSH session, headless server, tmux pane | `cargo run -p rustytree-cli` |
+| Integration test, scripting, custom output | depend on `rustytree-core` directly |
 
 ## Data flow during a scan
 

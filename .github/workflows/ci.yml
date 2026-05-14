@@ -44,7 +44,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -75,7 +75,7 @@ jobs:
           key: ${{ matrix.os }}
 
       - name: cargo test
-        run: cargo test --all
+        run: cargo test --workspace
 
       - name: cargo build --release
-        run: cargo build --release
+        run: cargo build --workspace --release

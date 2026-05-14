@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 
 use eframe::egui;
-use rustytree::format;
-use rustytree::scan::{NodeId, Tree};
+use rustytree_core::format;
+use rustytree_core::scan::{NodeId, Tree};
 
 use crate::app::{COLUMNS, ColumnKind, RowEntry, RustyTreeApp, SortDir, SortKey};
 
@@ -203,7 +203,7 @@ fn render_row(
 
 fn render_name_cell(
     ui: &mut egui::Ui,
-    node: &rustytree::scan::Node,
+    node: &rustytree_core::scan::Node,
     depth: u16,
     expanded: bool,
     width: f32,
@@ -369,7 +369,7 @@ fn compute_subtree_matches(tree: &Tree, needle: &str) -> HashSet<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustytree::scan::{Node, NodeKind};
+    use rustytree_core::scan::{Node, NodeKind};
 
     fn dir(name: &str) -> Node {
         Node::new_leaf(name, NodeKind::Dir, 0, 0, None, None)

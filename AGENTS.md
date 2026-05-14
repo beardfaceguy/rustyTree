@@ -20,21 +20,32 @@ Cross-tool guidance for AI coding agents working in this repository.
 
 ## What is rustyTree?
 
-rustyTree is a cross-platform GUI **disk-usage analyzer** written in Rust,
+rustyTree is a cross-platform **disk-usage analyzer** written in Rust,
 modeled after [JAM Software TreeSize](https://www.jam-software.com/treesize).
 You point it at a folder, it scans recursively, and shows you a sortable tree
 of folders and files ordered by size with extra columns (file count,
 last-modified, allocated vs logical bytes, owner) plus search/filter.
 
+It ships as **two front-ends** sharing one scan engine:
+
+- `rustytree-gui` — desktop window via
+  [`eframe`](https://crates.io/crates/eframe) /
+  [`egui`](https://crates.io/crates/egui). Pure Rust, no system
+  GTK/Qt dependency.
+- `rustytree-cli` — interactive terminal UI via
+  [`ratatui`](https://crates.io/crates/ratatui) +
+  [`crossterm`](https://crates.io/crates/crossterm). Pure Rust, no
+  system curses dependency.
+
+Both are thin clients on top of `rustytree-core`, the headless library
+that owns scanning, aggregation, sorting, and search-filter logic.
+
 - **Primary platform:** Linux. **Compiles on:** Linux, macOS, Windows.
-- **GUI:** [`eframe`](https://crates.io/crates/eframe) /
-  [`egui`](https://crates.io/crates/egui) — pure-Rust, no system GTK/Qt
-  dependency.
 - **Filesystem traversal:** [`jwalk`](https://crates.io/crates/jwalk)
-  (parallel) on a worker thread, results streamed to the UI through a
-  channel.
-- **Status:** early. Window opens; scan engine, tree view, columns, sorting,
-  and search are tracked as separate tasks in Vikunja.
+  (parallel) on a worker thread, results streamed to the front-end
+  through a channel.
+- **Status:** GUI is MVP-complete. CLI is under active development; see
+  Vikunja project 66 for the open task list.
 
 ### MVP scope
 
@@ -64,35 +75,65 @@ code.
 
 ## Repo layout
 
-```
+This is a Cargo **workspace** with one library crate and one binary crate
+per front-end. The split is the contract: anything that touches the
+filesystem, aggregates a tree, sorts, or filters lives in
+`rustytree-core`. The front-ends only do display + input handling.
+
+```text
 rustyTree/
-├── AGENTS.md                # This file
-├── README.md                # User-facing pitch + build instructions
-├── Cargo.toml               # Workspace + crate metadata
-├── Cargo.lock
-├── docs/                    # Technical specs (architecture, threading,
-│                            # platform shims)
-├── src/
-│   ├── main.rs              # eframe entrypoint, NativeOptions
-│   ├── lib.rs               # Re-exports for integration tests
-│   ├── app.rs               # Top-level eframe::App, layout, scan wiring
-│   ├── scan/                # Scan engine (no UI deps)
-│   │   ├── mod.rs
-│   │   ├── walker.rs        # jwalk-based parallel walker
-│   │   ├── tree.rs          # In-memory size tree (arena/slotmap)
-│   │   ├── events.rs        # ScanEvent / ScanHandle / cancellation
-│   │   └── platform.rs      # cfg(unix)/cfg(windows) metadata shims
-│   ├── ui/                  # egui rendering helpers
-│   │   ├── mod.rs
-│   │   ├── tree_view.rs     # Indented tree column with expand/collapse
-│   │   ├── columns.rs       # Extra columns (count, mtime, alloc, owner)
-│   │   ├── search.rs        # Search/filter state
-│   │   └── status.rs        # Status bar
-│   └── format.rs            # Human-readable bytes/dates
-└── tests/                   # Integration tests (use tempfile)
+├── AGENTS.md                          # This file
+├── README.md                          # User-facing pitch + build/run
+├── Cargo.toml                         # Virtual workspace
+├── Cargo.lock                         # Workspace-wide lockfile
+├── docs/                              # Technical specs (architecture,
+│                                      # threading, platform shims)
+├── crates/
+│   ├── rustytree-core/                # Headless lib. NO GUI/TUI deps.
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs                 # `pub mod scan; pub mod format;`
+│   │   │   ├── format.rs              # bytes / mtime / percent / elapsed
+│   │   │   └── scan/
+│   │   │       ├── mod.rs
+│   │   │       ├── walker.rs          # jwalk-based parallel walker
+│   │   │       ├── tree.rs            # In-memory size tree (Vec arena)
+│   │   │       ├── events.rs          # ScanEvent / ScanHandle / cancel
+│   │   │       └── platform.rs        # cfg(unix)/cfg(windows) shims
+│   │   └── tests/
+│   │       └── scan_integration.rs    # tempfile-based end-to-end tests
+│   ├── rustytree-gui/                 # eframe/egui binary
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs                # NativeOptions, run_native
+│   │       ├── app.rs                 # RustyTreeApp, scan wiring
+│   │       └── ui/
+│   │           ├── mod.rs
+│   │           ├── tree_view.rs       # virtualized hierarchical table
+│   │           ├── toolbar.rs         # path + Browse + Scan/Cancel + search
+│   │           └── status.rs          # bottom bar
+│   └── rustytree-cli/                 # ratatui/crossterm binary
+│       └── ... (added in a later task)
+└── .github/workflows/ci.yml           # workspace-wide fmt/clippy/test/build
 ```
 
 Anything not yet in this tree is a future task — don't be surprised by gaps.
+
+### What goes where
+
+| Concern | Crate |
+|--------|-------|
+| Filesystem scan, jwalk wrapper, cancellation | `rustytree-core::scan::walker`/`events` |
+| Tree storage, aggregation, sort/percent helpers | `rustytree-core::scan::tree` |
+| Cross-platform metadata (allocated bytes, owner, mtime) | `rustytree-core::scan::platform` |
+| Byte / date / duration formatting | `rustytree-core::format` |
+| Hierarchy flatten / search-match closure / chevron picker | `rustytree-core` (extracted before the CLI lands) |
+| eframe rendering, egui widgets, file picker | `rustytree-gui` |
+| ratatui rendering, crossterm event loop | `rustytree-cli` |
+
+If you find yourself wanting to copy a function from one front-end into
+the other, lift it to `rustytree-core` instead. Two-front-end consistency
+is the whole point of the split.
 
 ## Prerequisites
 
@@ -168,8 +209,9 @@ incomplete.
 - **Unit tests** live in `#[cfg(test)] mod tests` blocks at the bottom of
   each source file. Use them for pure logic (tree aggregation math,
   formatting, sort comparators).
-- **Integration tests** live under `tests/` and exercise the public API of
-  `rustytree` as a library (`use rustytree::scan::*`). Use
+- **Integration tests** live under `crates/rustytree-core/tests/` and
+  exercise the public API of `rustytree-core` as a library
+  (`use rustytree_core::scan::*`). Use
   [`tempfile`](https://crates.io/crates/tempfile) to build fixture trees on
   the fly — never commit binary fixtures.
 - **UI tests** are not required for MVP. Focus on testing the headless
@@ -177,14 +219,22 @@ incomplete.
 
 ### Running tests
 
+Always run against the whole workspace, not a single crate:
+
 ```sh
-cargo test            # unit + integration
-cargo test --release  # for the cancellation/timing tests
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 ```
 
 CI runs the same on `ubuntu-latest`, `macos-latest`, `windows-latest`.
+
+To exercise just one front-end:
+
+```sh
+cargo run -p rustytree-gui
+cargo run -p rustytree-cli
+```
 
 ## Vikunja project management
 

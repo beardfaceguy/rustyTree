@@ -1,4 +1,4 @@
-//! End-to-end integration tests for the public `rustytree::scan` API.
+//! End-to-end integration tests for the public `rustytree_core::scan` API.
 //!
 //! These exercise the actual worker thread + channel plumbing, not just the
 //! synchronous `walker::build_tree` helper. They use `tempfile` fixtures so
@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use rustytree::scan::{ScanEvent, start_scan};
+use rustytree_core::scan::{ScanEvent, start_scan};
 
 /// Build:
 ///   <tmp>/root/a/a1.bin (100 bytes)
@@ -31,7 +31,7 @@ fn make_fixture() -> tempfile::TempDir {
 
 /// Drain events from a handle until we hit a terminal state, with a timeout
 /// so a buggy worker can't hang the test suite.
-fn drain_until_terminal(handle: &rustytree::scan::ScanHandle) -> ScanEvent {
+fn drain_until_terminal(handle: &rustytree_core::scan::ScanHandle) -> ScanEvent {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match handle.try_recv() {
@@ -72,7 +72,7 @@ fn nonexistent_root_reports_not_a_directory() {
     let handle = start_scan(phantom);
     let ev = drain_until_terminal(&handle);
     match ev {
-        ScanEvent::Error(rustytree::scan::ScanError::NotADirectory(_)) => {}
+        ScanEvent::Error(rustytree_core::scan::ScanError::NotADirectory(_)) => {}
         other => panic!("expected NotADirectory, got {other:?}"),
     }
 }
