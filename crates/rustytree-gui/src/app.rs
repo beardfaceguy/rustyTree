@@ -94,7 +94,7 @@ impl RustyTreeApp {
     pub fn start_scan_from_input(&mut self) {
         let path = PathBuf::from(self.path_input.trim());
         if path.as_os_str().is_empty() {
-            self.status = Status::Error(ScanError::NotADirectory(path.clone()).to_string());
+            self.status = Status::Error(ScanError::NotFound(path).to_string());
             return;
         }
         self.tree = None;
@@ -104,8 +104,15 @@ impl RustyTreeApp {
             sort_dir: self.ui.sort_dir,
             ..Default::default()
         };
-        self.status = Status::Scanning;
-        self.scan = Some(start_scan(path));
+        match start_scan(path) {
+            Ok(handle) => {
+                self.status = Status::Scanning;
+                self.scan = Some(handle);
+            }
+            Err(e) => {
+                self.status = Status::Error(e.to_string());
+            }
+        }
     }
 
     pub fn pick_directory(&mut self) {

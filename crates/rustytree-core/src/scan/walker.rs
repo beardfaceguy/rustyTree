@@ -79,7 +79,16 @@ pub fn build_tree(
         let parent = if entry.depth() == 0 {
             None
         } else {
-            path.parent().and_then(|p| path_to_id.get(p).copied())
+            // If the parent dir's metadata call failed earlier we may have
+            // skipped the parent and never recorded its NodeId. Skip the
+            // orphan child rather than passing `None` to `tree.insert` —
+            // the latter would silently overwrite the root in release
+            // builds (the `debug_assert!` in `Tree::insert` is compiled
+            // out under `--release`).
+            match path.parent().and_then(|p| path_to_id.get(p).copied()) {
+                Some(p) => Some(p),
+                None => continue,
+            }
         };
 
         let id = tree.insert(parent, node);

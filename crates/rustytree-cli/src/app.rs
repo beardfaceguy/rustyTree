@@ -242,7 +242,7 @@ impl RustyTreeApp {
 
     fn start_scan(&mut self) {
         if self.path.as_os_str().is_empty() {
-            self.status = Status::Error(ScanError::NotADirectory(self.path.clone()).to_string());
+            self.status = Status::Error(ScanError::NotFound(self.path.clone()).to_string());
             return;
         }
         self.tree = None;
@@ -256,8 +256,15 @@ impl RustyTreeApp {
             ..Default::default()
         };
         self.scroll_offset = 0;
-        self.status = Status::Scanning;
-        self.scan = Some(start_scan(self.path.clone()));
+        match start_scan(self.path.clone()) {
+            Ok(handle) => {
+                self.status = Status::Scanning;
+                self.scan = Some(handle);
+            }
+            Err(e) => {
+                self.status = Status::Error(e.to_string());
+            }
+        }
     }
 
     fn move_selection(&mut self, delta: i32) {

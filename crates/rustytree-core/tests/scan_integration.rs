@@ -55,7 +55,7 @@ fn drain_until_terminal(handle: &rustytree_core::scan::ScanHandle) -> ScanEvent 
 #[test]
 fn full_scan_reports_done_with_correct_totals() {
     let dir = make_fixture();
-    let handle = start_scan(dir.path().join("root"));
+    let handle = start_scan(dir.path().join("root")).expect("scan started");
     let ev = drain_until_terminal(&handle);
     let ScanEvent::Done { tree, elapsed: _ } = ev else {
         panic!("expected Done, got {ev:?}");
@@ -67,13 +67,24 @@ fn full_scan_reports_done_with_correct_totals() {
 }
 
 #[test]
-fn nonexistent_root_reports_not_a_directory() {
+fn nonexistent_root_returns_not_found_synchronously() {
     let phantom = PathBuf::from("/this/path/does/not/exist/rustytree-test");
-    let handle = start_scan(phantom);
-    let ev = drain_until_terminal(&handle);
-    match ev {
-        ScanEvent::Error(rustytree_core::scan::ScanError::NotADirectory(_)) => {}
-        other => panic!("expected NotADirectory, got {other:?}"),
+    match start_scan(phantom) {
+        Err(rustytree_core::scan::ScanError::NotFound(_)) => {}
+        Err(other) => panic!("expected Err(NotFound), got Err({other:?})"),
+        Ok(_) => panic!("expected Err(NotFound), got Ok(handle)"),
+    }
+}
+
+#[test]
+fn file_root_returns_not_a_directory_synchronously() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let f = dir.path().join("not-a-directory.txt");
+    std::fs::write(&f, b"this is a file, not a directory").unwrap();
+    match start_scan(f) {
+        Err(rustytree_core::scan::ScanError::NotADirectory(_)) => {}
+        Err(other) => panic!("expected Err(NotADirectory), got Err({other:?})"),
+        Ok(_) => panic!("expected Err(NotADirectory), got Ok(handle)"),
     }
 }
 
@@ -93,7 +104,7 @@ fn cancellation_short_circuits_a_running_scan() {
         }
     }
 
-    let handle = start_scan(root);
+    let handle = start_scan(root).expect("scan started");
     handle.cancel();
     let ev = drain_until_terminal(&handle);
     // Either the worker had already finished by the time we cancelled (small
@@ -102,4 +113,33 @@ fn cancellation_short_circuits_a_running_scan() {
         ScanEvent::Cancelled | ScanEvent::Done { .. } => {}
         other => panic!("expected Cancelled or Done, got {other:?}"),
     }
+}
+
+#[test]
+fn drop_does_not_block_the_caller() {
+    // Spawn a scan on a fairly chunky tree, drop the handle immediately,
+    // and assert we return promptly. Joining on Drop would block until
+    // the worker finished walking thousands of entries; detaching means
+    // we return as soon as the cancel flag is flipped (microseconds).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    for i in 0..200 {
+        let sub = root.join(format!("sub{i}"));
+        std::fs::create_dir(&sub).unwrap();
+        for j in 0..20 {
+            std::fs::write(sub.join(format!("f{j}.bin")), vec![0u8; 64]).unwrap();
+        }
+    }
+
+    let handle = start_scan(root).expect("scan started");
+    let start = Instant::now();
+    drop(handle);
+    let elapsed = start.elapsed();
+    // 250ms is generous: dropping should be near-instant. If anyone adds a
+    // join back into Drop and the worker is mid-walk, this fires.
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "ScanHandle::drop took {elapsed:?}, expected near-instant detach"
+    );
 }

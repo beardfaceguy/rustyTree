@@ -34,13 +34,25 @@ pub enum ScanEvent {
     Error(ScanError),
 }
 
-/// Failure modes a scan can report to the UI.
+/// Failure modes a scan can report to the UI. The first three are returned
+/// synchronously from [`start_scan`]; `Cancelled` is delivered via the
+/// channel as a [`ScanEvent::Cancelled`] (this variant exists so callers
+/// who short-circuit straight to a `Result` can still represent the
+/// cancelled state in their own error type if they want to).
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
+    /// The scan root path does not exist on the filesystem.
+    #[error("scan root {0:?} does not exist")]
+    NotFound(PathBuf),
+    /// The scan root exists but is a file, symlink, or other non-directory.
     #[error("scan root {0:?} is not a directory")]
     NotADirectory(PathBuf),
-    #[error("io error: {0}")]
-    Io(String),
+    /// The OS refused to spawn the scan worker thread (e.g. resource
+    /// exhaustion). The wrapped `io::Error` is what `Builder::spawn`
+    /// returned.
+    #[error("could not spawn scan worker thread: {0}")]
+    SpawnFailed(std::io::Error),
+    /// Scan was cancelled before it could finish.
     #[error("scan was cancelled")]
     Cancelled,
 }
@@ -84,16 +96,45 @@ impl ScanHandle {
 
 impl Drop for ScanHandle {
     fn drop(&mut self) {
+        // Set the cancel flag so the worker exits on its next per-entry
+        // check. We *intentionally* do NOT join here: cancellation is
+        // cooperative, so a worker stuck in a slow filesystem syscall
+        // (hung NFS mount, sleeping disk) wouldn't observe the flag for
+        // an arbitrary amount of time, and joining would freeze whichever
+        // thread is dropping the handle (typically the UI thread on
+        // rescan). The worker will still finish on its own and clean up
+        // its end of the channel; nobody is reading by then.
         self.cancel();
-        if let Some(j) = self.join.take() {
-            let _ = j.join();
-        }
+        // `join` field is just dropped — the OS reaps the thread when it
+        // exits. The `JoinHandle::drop` impl is documented as detaching.
+        let _ = self.join.take();
     }
 }
 
 /// Spawn a worker thread that scans `root` and streams events through the
 /// returned [`ScanHandle`].
-pub fn start_scan(root: PathBuf) -> ScanHandle {
+///
+/// Synchronous failures (`root` doesn't exist / isn't a directory / can't
+/// spawn the worker thread) come back as `Err`. Once the worker is
+/// running, all further outcomes (progress, completion, cancellation,
+/// runtime I/O errors) flow through the [`ScanEvent`] channel.
+pub fn start_scan(root: PathBuf) -> Result<ScanHandle, ScanError> {
+    // Validate up front so a typo'd path produces an immediate, typed
+    // error instead of being routed through the worker thread + channel.
+    // Use `try_exists` so transient I/O errors during the existence check
+    // (e.g. EACCES on the parent dir) don't masquerade as "doesn't exist".
+    match root.try_exists() {
+        Ok(true) => {}
+        Ok(false) => return Err(ScanError::NotFound(root)),
+        // Treat ambiguous existence the same as missing for now. A future
+        // change can add a dedicated variant once we carry richer scan
+        // diagnostics.
+        Err(_) => return Err(ScanError::NotFound(root)),
+    }
+    if !root.is_dir() {
+        return Err(ScanError::NotADirectory(root));
+    }
+
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     let cancel_worker = cancel.clone();
@@ -102,10 +143,6 @@ pub fn start_scan(root: PathBuf) -> ScanHandle {
         .name("rustytree-scan".into())
         .spawn(move || {
             let start = Instant::now();
-            if !root.is_dir() {
-                let _ = tx.send(ScanEvent::Error(ScanError::NotADirectory(root)));
-                return;
-            }
             let tx_progress = tx.clone();
             let mut last_send = Instant::now();
             let progress = move |p: ScanProgress| {
@@ -129,11 +166,11 @@ pub fn start_scan(root: PathBuf) -> ScanHandle {
                 }
             }
         })
-        .expect("spawn rustytree-scan worker thread");
+        .map_err(ScanError::SpawnFailed)?;
 
-    ScanHandle {
+    Ok(ScanHandle {
         cancel,
         rx,
         join: Some(join),
-    }
+    })
 }
