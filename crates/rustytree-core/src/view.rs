@@ -133,12 +133,24 @@ pub struct UiState {
     /// it was built, and the resulting set of matching ids (matches
     /// themselves plus all of their ancestors). [`rebuild_visible_rows`]
     /// reuses this when the user hasn't changed the search string AND
-    /// the tree size hasn't grown — typical idle / sort-toggle /
-    /// expand-toggle cases. The tree size is part of the key because
-    /// the arena is append-only during a scan: as new nodes arrive,
-    /// the cache is naturally invalidated. Across scans the apps
-    /// explicitly call [`UiState::invalidate_search_cache`] when they
-    /// replace the [`Tree`].
+    /// the tree size hasn't grown — the typical idle / sort-toggle /
+    /// expand-toggle cases.
+    ///
+    /// The `tree_len` part of the key is **defensive**: today the
+    /// scanner delivers the tree atomically via `ScanEvent::Done`, so
+    /// `rebuild_visible_rows` is never called against a partial
+    /// mid-scan tree, and across scans the front-ends call
+    /// [`UiState::reset_for_new_scan`] which drops the cache. But
+    /// keying on `tree.len()` cheaply guards the contract anyway: any
+    /// future incremental-update path (or test) that mutates the tree
+    /// in place gets correct results without having to remember to
+    /// invalidate.
+    ///
+    /// Note: a tree of identical length but different content (e.g.
+    /// rescanning a different directory that happens to produce the
+    /// same node count) would alias on this key. That window is closed
+    /// by `reset_for_new_scan`, which the apps already call on every
+    /// scan start.
     search_cache: Option<SearchCache>,
 }
 
@@ -150,21 +162,19 @@ struct SearchCache {
 }
 
 impl UiState {
-    /// Drop the search-match memo. Callers must invoke this when the
-    /// underlying [`Tree`] is replaced (e.g. starting a new scan); the
-    /// cache otherwise keys on `tree.len()` and would silently serve
-    /// stale `NodeId`s if the new tree happened to have the same
-    /// length as the previous one.
-    pub fn invalidate_search_cache(&mut self) {
-        self.search_cache = None;
-    }
-
     /// Reset the view state for a fresh scan, preserving only the
     /// fields the user explicitly cares about across scans: the
     /// in-progress search string and the chosen sort column /
     /// direction. Everything else (expanded nodes, selection, the
     /// flattened row list, the search-match cache, the last-progress
     /// snapshot) goes back to defaults.
+    ///
+    /// **Maintainer note:** when adding a new field to [`UiState`],
+    /// decide explicitly whether it should survive a rescan or not,
+    /// and if it should, extend this method to preserve it. The
+    /// preserved-field list is hand-rolled (rather than e.g.
+    /// `..Default::default()` with mutation) precisely so that "did
+    /// you mean for this to survive?" lands as a code-review question.
     ///
     /// Both front-ends call this when they swap in a new [`Tree`];
     /// keeping the logic on `UiState` itself ensures the GUI and CLI
@@ -304,9 +314,12 @@ pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
     }
 }
 
-// Borrowed when no search is active so the visible-row builder can
-// uniformly take a `&HashSet<NodeId>` without forcing an empty
-// allocation per call.
+// Empty placeholder so both arms of the `match &state.search_cache`
+// lookup can yield `&HashSet<NodeId>` with the same lifetime. (An
+// `HashSet::new()` *value* on the no-search arm wouldn't allocate —
+// `HashSet` is lazy — but it would have a different, shorter lifetime
+// than the borrow into `state.search_cache`, so the match arms wouldn't
+// unify.)
 static EMPTY_MATCHES: std::sync::LazyLock<HashSet<NodeId>> = std::sync::LazyLock::new(HashSet::new);
 
 /// Toggle a node's presence in the expanded set. Returns the new state
@@ -544,6 +557,47 @@ mod tests {
     }
 
     #[test]
+    fn search_cache_invalidates_when_tree_len_changes() {
+        // The cache key includes `tree.len()` so an in-place tree
+        // mutation (or a rescan that lands a tree of a different
+        // size) can't serve a stale match-set. We can't easily edit
+        // the tree in place from this test, so we simulate the
+        // "tree size changed" condition by poking a wrong `tree_len`
+        // into the cache and rebuilding — `rebuild_visible_rows`
+        // must notice the mismatch and recompute.
+        let tree = sample();
+        let mut state = UiState {
+            search: "b1".into(),
+            ..Default::default()
+        };
+        rebuild_visible_rows(&tree, &mut state);
+        let real_len = tree.len();
+        let real_matches = state
+            .search_cache
+            .as_ref()
+            .expect("populated on first rebuild")
+            .matches
+            .clone();
+        // Force a stale tree_len. With this the next rebuild MUST
+        // recompute, because the cache claims it was built against
+        // a tree of a different size.
+        state.search_cache.as_mut().unwrap().tree_len = real_len.wrapping_add(1);
+        rebuild_visible_rows(&tree, &mut state);
+        let after = state
+            .search_cache
+            .as_ref()
+            .expect("populated after recompute");
+        assert_eq!(
+            after.tree_len, real_len,
+            "must recompute against current tree.len()"
+        );
+        assert_eq!(
+            after.matches, real_matches,
+            "needle unchanged → same match-set"
+        );
+    }
+
+    #[test]
     fn search_cache_drops_when_search_cleared() {
         // Empty search means no filter, so we shouldn't be holding a
         // potentially large match-set on the side.
@@ -556,19 +610,6 @@ mod tests {
         assert!(state.search_cache.is_some());
         state.search = String::new();
         rebuild_visible_rows(&tree, &mut state);
-        assert!(state.search_cache.is_none());
-    }
-
-    #[test]
-    fn invalidate_search_cache_clears_memo() {
-        let tree = sample();
-        let mut state = UiState {
-            search: "b1".into(),
-            ..Default::default()
-        };
-        rebuild_visible_rows(&tree, &mut state);
-        assert!(state.search_cache.is_some());
-        state.invalidate_search_cache();
         assert!(state.search_cache.is_none());
     }
 
