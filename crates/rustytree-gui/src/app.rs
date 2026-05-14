@@ -1,79 +1,18 @@
-//! Top-level eframe application: scan plumbing + UI state.
+//! Top-level eframe application: scan plumbing + per-frame poll loop.
 //!
-//! The render code itself lives in [`crate::ui`] so this file stays focused
-//! on the lifecycle of a scan (start / poll / cancel) and the bag of UI
-//! state the row renderer needs.
+//! All shared front-end state (sort/search/expanded/visible-rows + the
+//! status enum + column metadata) lives in `rustytree_core::view`. This
+//! file owns only the eframe glue: the file picker, the per-frame poll,
+//! and the layout that wires the toolbar / status bar / tree view.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui;
-use rustytree_core::format;
-use rustytree_core::scan::{
-    NodeId, ScanError, ScanEvent, ScanHandle, ScanProgress, Tree, start_scan,
-};
+use rustytree_core::scan::{ScanError, ScanEvent, ScanHandle, Tree, start_scan};
+use rustytree_core::view::{ColumnKind, Status, UiState};
 
 use crate::ui;
-
-/// Sort field for child rows under any given parent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SortKey {
-    #[default]
-    Size,
-    Name,
-    Allocated,
-    FileCount,
-    DirCount,
-    Mtime,
-    Owner,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SortDir {
-    Asc,
-    #[default]
-    Desc,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RowEntry {
-    pub id: NodeId,
-    pub depth: u16,
-}
-
-/// Runtime status shown in the bottom status bar.
-#[derive(Debug, Default)]
-pub enum Status {
-    #[default]
-    Idle,
-    Scanning,
-    Done {
-        elapsed: Duration,
-        total_bytes: u64,
-        file_count: u64,
-        dir_count: u64,
-    },
-    Cancelled,
-    Error(String),
-}
-
-/// Mutable UI state that survives across frames but is recomputed eagerly
-/// when sort/search/expansion changes.
-#[derive(Default)]
-pub struct UiState {
-    pub expanded: HashSet<NodeId>,
-    pub selected: Option<NodeId>,
-    pub sort_key: SortKey,
-    pub sort_dir: SortDir,
-    pub search: String,
-    pub visible_rows: Vec<RowEntry>,
-    /// Cumulative `entries` value from the most recent Progress event.
-    pub last_progress: Option<ScanProgress>,
-    /// `true` whenever `visible_rows` no longer reflects the current
-    /// `expanded` / `sort_*` / `search` / `tree` state and must be rebuilt.
-    pub rows_dirty: bool,
-}
 
 pub struct RustyTreeApp {
     pub path_input: String,
@@ -201,87 +140,18 @@ impl eframe::App for RustyTreeApp {
     }
 }
 
-/// Compose the columns that the table renders. Order here is the on-screen
-/// left-to-right order. Kept alongside [`SortKey`] so headers and rows agree.
-pub const COLUMNS: &[(&str, ColumnKind)] = &[
-    ("Name", ColumnKind::Name),
-    ("Size", ColumnKind::Size),
-    ("%", ColumnKind::PercentOfRoot),
-    ("Allocated", ColumnKind::Allocated),
-    ("Files", ColumnKind::FileCount),
-    ("Dirs", ColumnKind::DirCount),
-    ("Modified", ColumnKind::Mtime),
-    ("Owner", ColumnKind::Owner),
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ColumnKind {
-    Name,
-    Size,
-    PercentOfRoot,
-    Allocated,
-    FileCount,
-    DirCount,
-    Mtime,
-    Owner,
-}
-
-impl ColumnKind {
-    /// Pixel width allocated to this column. Name is "rest"; everything else
-    /// is a fixed width chosen to fit typical content.
-    pub fn width(self) -> Option<f32> {
-        match self {
-            ColumnKind::Name => None,
-            ColumnKind::Size => Some(96.0),
-            ColumnKind::PercentOfRoot => Some(72.0),
-            ColumnKind::Allocated => Some(96.0),
-            ColumnKind::FileCount => Some(64.0),
-            ColumnKind::DirCount => Some(64.0),
-            ColumnKind::Mtime => Some(140.0),
-            ColumnKind::Owner => Some(110.0),
-        }
-    }
-
-    /// Sort key triggered when the user clicks this column's header.
-    pub fn sort_key(self) -> Option<SortKey> {
-        match self {
-            ColumnKind::Name => Some(SortKey::Name),
-            ColumnKind::Size | ColumnKind::PercentOfRoot => Some(SortKey::Size),
-            ColumnKind::Allocated => Some(SortKey::Allocated),
-            ColumnKind::FileCount => Some(SortKey::FileCount),
-            ColumnKind::DirCount => Some(SortKey::DirCount),
-            ColumnKind::Mtime => Some(SortKey::Mtime),
-            ColumnKind::Owner => Some(SortKey::Owner),
-        }
-    }
-}
-
-/// Format the current status as a single line for the bottom bar.
-pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> String {
-    match status {
-        Status::Idle => "ready".into(),
-        Status::Scanning => match last_progress {
-            Some(p) => format!(
-                "scanning... {} entries, {} so far ({})",
-                p.entries,
-                format::bytes(p.bytes),
-                p.current_path.display()
-            ),
-            None => "scanning...".into(),
-        },
-        Status::Done {
-            elapsed,
-            total_bytes,
-            file_count,
-            dir_count,
-        } => format!(
-            "done in {} | {} | {} files, {} dirs",
-            format::elapsed(*elapsed),
-            format::bytes(*total_bytes),
-            file_count,
-            dir_count
-        ),
-        Status::Cancelled => "cancelled".into(),
-        Status::Error(e) => format!("error: {e}"),
+/// Pixel widths for each column in the GUI. Kept here (rather than on
+/// [`ColumnKind`] in core) because pixels are a GUI concept; the CLI sizes
+/// columns in characters instead.
+pub fn column_pixel_width(kind: ColumnKind) -> Option<f32> {
+    match kind {
+        ColumnKind::Name => None,
+        ColumnKind::Size => Some(96.0),
+        ColumnKind::PercentOfRoot => Some(72.0),
+        ColumnKind::Allocated => Some(96.0),
+        ColumnKind::FileCount => Some(64.0),
+        ColumnKind::DirCount => Some(64.0),
+        ColumnKind::Mtime => Some(140.0),
+        ColumnKind::Owner => Some(110.0),
     }
 }

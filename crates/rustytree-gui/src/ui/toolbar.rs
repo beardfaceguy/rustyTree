@@ -1,8 +1,9 @@
 //! Top toolbar: path input, file picker, scan/cancel, search box.
 
 use eframe::egui;
+use rustytree_core::view::Status;
 
-use crate::app::{RustyTreeApp, Status};
+use crate::app::RustyTreeApp;
 
 pub fn render(app: &mut RustyTreeApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {

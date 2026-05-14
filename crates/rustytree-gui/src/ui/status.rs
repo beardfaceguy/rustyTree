@@ -1,8 +1,9 @@
 //! Bottom status bar: shows scan progress, completion stats, or errors.
 
 use eframe::egui;
+use rustytree_core::view::status_line;
 
-use crate::app::{RustyTreeApp, status_line};
+use crate::app::RustyTreeApp;
 
 pub fn render(app: &RustyTreeApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
