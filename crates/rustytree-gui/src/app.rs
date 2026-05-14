@@ -98,12 +98,7 @@ impl RustyTreeApp {
             return;
         }
         self.tree = None;
-        self.ui = UiState {
-            search: std::mem::take(&mut self.ui.search),
-            sort_key: self.ui.sort_key,
-            sort_dir: self.ui.sort_dir,
-            ..Default::default()
-        };
+        self.ui.reset_for_new_scan();
         match start_scan(path) {
             Ok(handle) => {
                 self.status = Status::Scanning;

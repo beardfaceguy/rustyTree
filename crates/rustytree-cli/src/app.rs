@@ -247,15 +247,7 @@ impl RustyTreeApp {
             return;
         }
         self.tree = None;
-        let preserved_search = std::mem::take(&mut self.ui.search);
-        let preserved_sort_key = self.ui.sort_key;
-        let preserved_sort_dir = self.ui.sort_dir;
-        self.ui = UiState {
-            search: preserved_search,
-            sort_key: preserved_sort_key,
-            sort_dir: preserved_sort_dir,
-            ..Default::default()
-        };
+        self.ui.reset_for_new_scan();
         self.scroll_offset = 0;
         match start_scan(self.path.clone()) {
             Ok(handle) => {

@@ -128,6 +128,56 @@ pub struct UiState {
     /// `true` whenever `visible_rows` no longer reflects the current
     /// `expanded` / `sort_*` / `search` / `tree` state and must be rebuilt.
     pub rows_dirty: bool,
+    /// Memoised result of [`compute_subtree_matches`]: the lowercased
+    /// needle the cache was built for, the tree node count at the time
+    /// it was built, and the resulting set of matching ids (matches
+    /// themselves plus all of their ancestors). [`rebuild_visible_rows`]
+    /// reuses this when the user hasn't changed the search string AND
+    /// the tree size hasn't grown — typical idle / sort-toggle /
+    /// expand-toggle cases. The tree size is part of the key because
+    /// the arena is append-only during a scan: as new nodes arrive,
+    /// the cache is naturally invalidated. Across scans the apps
+    /// explicitly call [`UiState::invalidate_search_cache`] when they
+    /// replace the [`Tree`].
+    search_cache: Option<SearchCache>,
+}
+
+/// Internal memo for `rebuild_visible_rows`. See [`UiState::search_cache`].
+struct SearchCache {
+    needle: String,
+    tree_len: usize,
+    matches: HashSet<NodeId>,
+}
+
+impl UiState {
+    /// Drop the search-match memo. Callers must invoke this when the
+    /// underlying [`Tree`] is replaced (e.g. starting a new scan); the
+    /// cache otherwise keys on `tree.len()` and would silently serve
+    /// stale `NodeId`s if the new tree happened to have the same
+    /// length as the previous one.
+    pub fn invalidate_search_cache(&mut self) {
+        self.search_cache = None;
+    }
+
+    /// Reset the view state for a fresh scan, preserving only the
+    /// fields the user explicitly cares about across scans: the
+    /// in-progress search string and the chosen sort column /
+    /// direction. Everything else (expanded nodes, selection, the
+    /// flattened row list, the search-match cache, the last-progress
+    /// snapshot) goes back to defaults.
+    ///
+    /// Both front-ends call this when they swap in a new [`Tree`];
+    /// keeping the logic on `UiState` itself ensures the GUI and CLI
+    /// can't drift on what "starting a new scan" means.
+    pub fn reset_for_new_scan(&mut self) {
+        let preserved_search = std::mem::take(&mut self.search);
+        let preserved_sort_key = self.sort_key;
+        let preserved_sort_dir = self.sort_dir;
+        *self = UiState::default();
+        self.search = preserved_search;
+        self.sort_key = preserved_sort_key;
+        self.sort_dir = preserved_sort_dir;
+    }
 }
 
 /// Pick the toggle glyph for a row. Pure ASCII so it always renders, even
@@ -206,10 +256,31 @@ pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
 
     let needle = state.search.trim().to_lowercase();
     let filter_active = !needle.is_empty();
-    let subtree_has_match = if filter_active {
-        compute_subtree_matches(tree, &needle)
+    // Reuse the cached match-set when the needle and the tree size are
+    // both unchanged from the previous build. A clean cache miss
+    // (different needle, or the arena grew because a Progress event
+    // landed more nodes) recomputes and stores the new memo. When the
+    // filter is inactive we drop the cache so we don't pin the
+    // potentially large `HashSet` for no reason.
+    if !filter_active {
+        state.search_cache = None;
     } else {
-        HashSet::new()
+        let tree_len = tree.len();
+        let needs_recompute = match &state.search_cache {
+            Some(c) => c.needle != needle || c.tree_len != tree_len,
+            None => true,
+        };
+        if needs_recompute {
+            state.search_cache = Some(SearchCache {
+                needle: needle.clone(),
+                tree_len,
+                matches: compute_subtree_matches(tree, &needle),
+            });
+        }
+    }
+    let subtree_has_match: &HashSet<NodeId> = match &state.search_cache {
+        Some(c) => &c.matches,
+        None => &EMPTY_MATCHES,
     };
 
     let mut stack: Vec<(NodeId, u16)> = vec![(root, 0)];
@@ -232,6 +303,11 @@ pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
         }
     }
 }
+
+// Borrowed when no search is active so the visible-row builder can
+// uniformly take a `&HashSet<NodeId>` without forcing an empty
+// allocation per call.
+static EMPTY_MATCHES: std::sync::LazyLock<HashSet<NodeId>> = std::sync::LazyLock::new(HashSet::new);
 
 /// Toggle a node's presence in the expanded set. Returns the new state
 /// (`true` = now expanded).
@@ -410,6 +486,118 @@ mod tests {
         assert!(names.contains(&"beta"), "got {names:?}");
         assert!(!names.contains(&"alpha"), "got {names:?}");
         assert!(!names.contains(&"c.bin"), "got {names:?}");
+    }
+
+    #[test]
+    fn search_cache_is_reused_across_rebuilds_with_same_needle() {
+        // Two rebuilds with the same needle and same tree should give
+        // identical visible rows AND keep the same memoised match-set.
+        // We can't observe "did we recompute?" directly without
+        // instrumentation, so we snapshot the cache contents before
+        // and after the second rebuild and assert they're identical
+        // — combined with the row-for-row check that shape didn't
+        // change either.
+        let tree = sample();
+        let mut state = UiState {
+            search: "b1".into(),
+            ..Default::default()
+        };
+        rebuild_visible_rows(&tree, &mut state);
+        let cache_after_first = state
+            .search_cache
+            .as_ref()
+            .map(|c| (c.needle.clone(), c.tree_len, c.matches.clone()));
+        let rows_after_first: Vec<RowEntry> = state.visible_rows.clone();
+        rebuild_visible_rows(&tree, &mut state);
+        let cache_after_second = state
+            .search_cache
+            .as_ref()
+            .map(|c| (c.needle.clone(), c.tree_len, c.matches.clone()));
+        assert_eq!(cache_after_first, cache_after_second);
+        assert_eq!(rows_after_first, state.visible_rows);
+    }
+
+    #[test]
+    fn search_cache_invalidates_when_needle_changes() {
+        let tree = sample();
+        let mut state = UiState {
+            search: "b1".into(),
+            ..Default::default()
+        };
+        rebuild_visible_rows(&tree, &mut state);
+        let first_matches = state
+            .search_cache
+            .as_ref()
+            .expect("cache populated for non-empty search")
+            .matches
+            .clone();
+        // Switch needles. The cache must rebuild against the new
+        // needle, otherwise the visible rows would be stale.
+        state.search = "alpha".into();
+        rebuild_visible_rows(&tree, &mut state);
+        let second_cache = state
+            .search_cache
+            .as_ref()
+            .expect("cache repopulated after needle change");
+        assert_eq!(second_cache.needle, "alpha");
+        assert_ne!(second_cache.matches, first_matches);
+    }
+
+    #[test]
+    fn search_cache_drops_when_search_cleared() {
+        // Empty search means no filter, so we shouldn't be holding a
+        // potentially large match-set on the side.
+        let tree = sample();
+        let mut state = UiState {
+            search: "b1".into(),
+            ..Default::default()
+        };
+        rebuild_visible_rows(&tree, &mut state);
+        assert!(state.search_cache.is_some());
+        state.search = String::new();
+        rebuild_visible_rows(&tree, &mut state);
+        assert!(state.search_cache.is_none());
+    }
+
+    #[test]
+    fn invalidate_search_cache_clears_memo() {
+        let tree = sample();
+        let mut state = UiState {
+            search: "b1".into(),
+            ..Default::default()
+        };
+        rebuild_visible_rows(&tree, &mut state);
+        assert!(state.search_cache.is_some());
+        state.invalidate_search_cache();
+        assert!(state.search_cache.is_none());
+    }
+
+    #[test]
+    fn reset_for_new_scan_preserves_search_and_sort() {
+        // Borrow a real NodeId from a sample tree — `NodeId`'s wrapped
+        // u32 is private outside the scan module, and faking ids would
+        // make this test brittle anyway.
+        let tree = sample();
+        let root = tree.root().unwrap();
+        let mut state = UiState {
+            search: "abc".into(),
+            sort_key: SortKey::Name,
+            sort_dir: SortDir::Asc,
+            selected: Some(root),
+            rows_dirty: true,
+            ..Default::default()
+        };
+        state.expanded.insert(root);
+        state.visible_rows.push(RowEntry { id: root, depth: 0 });
+        state.reset_for_new_scan();
+        assert_eq!(state.search, "abc");
+        assert_eq!(state.sort_key, SortKey::Name);
+        assert_eq!(state.sort_dir, SortDir::Asc);
+        assert!(state.expanded.is_empty());
+        assert_eq!(state.selected, None);
+        assert!(state.visible_rows.is_empty());
+        assert!(!state.rows_dirty);
+        assert!(state.search_cache.is_none());
     }
 
     #[test]
