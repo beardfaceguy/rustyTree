@@ -52,7 +52,9 @@ rescans.
 
 ## Build & run
 
-Requires a stable Rust toolchain (1.85+ for edition 2024).
+Requires a stable Rust toolchain. The exact version is pinned in
+`rust-toolchain.toml` (currently `1.95.0`); rustup will auto-install it
+on first build.
 
 ### Desktop GUI
 

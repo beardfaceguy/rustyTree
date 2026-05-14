@@ -145,7 +145,7 @@ is the whole point of the split.
 
 | Dependency | Required by | Install |
 |-----------|-------------|---------|
-| Rust stable (1.80+) | Building rustyTree | https://rustup.rs |
+| Rust toolchain pinned in `rust-toolchain.toml` | Building rustyTree | https://rustup.rs |
 | OpenGL / system windowing libs | Running the GUI | see below |
 
 ### Linux (Debian/Ubuntu) system packages for `eframe`/`winit`/`glow`:
