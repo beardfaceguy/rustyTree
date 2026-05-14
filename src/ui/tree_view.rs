@@ -228,6 +228,7 @@ fn render_name_cell(
     }
 
     let icon = match node.kind {
+        NodeKind::Dir if expanded => "\u{1F4C2} ",
         NodeKind::Dir => "\u{1F4C1} ",
         NodeKind::File => "\u{1F4C4} ",
         NodeKind::Symlink => "\u{1F517} ",
