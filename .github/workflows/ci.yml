@@ -24,11 +24,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install pinned Rust toolchain
-        # GitHub-hosted runners ship with rustup preinstalled. `rustup show
-        # active-toolchain` materialises the channel + components named in
-        # rust-toolchain.toml at the repo root, which is the single source
+        # GitHub-hosted runners ship with rustup preinstalled.
+        # `--install` is required since rustup 1.28: prior to that
+        # release, `rustup show active-toolchain` would implicitly
+        # install the channel from rust-toolchain.toml; now you have to
+        # ask. rust-toolchain.toml at the repo root is the single source
         # of truth for the toolchain version and components.
-        run: rustup show active-toolchain
+        run: rustup show active-toolchain --install
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
@@ -58,9 +60,10 @@ jobs:
             libgl1-mesa-dev
 
       - name: Install pinned Rust toolchain
-        # See note in the fmt job: rust-toolchain.toml is the single
-        # source of truth for both channel and components.
-        run: rustup show active-toolchain
+        # See note in the fmt job; `--install` is required for rustup
+        # 1.28+ to actually materialise the toolchain rather than just
+        # printing it.
+        run: rustup show active-toolchain --install
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
