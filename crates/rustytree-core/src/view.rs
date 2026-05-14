@@ -156,7 +156,10 @@ pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> Str
                     p.current_path.display()
                 );
                 if p.errors > 0 {
-                    s.push_str(&format!(" — {} skipped (i/o errors)", p.errors));
+                    // "errors" not "skipped" — see ScanProgress::errors:
+                    // one unreadable directory hides many entries but
+                    // contributes a single error event.
+                    s.push_str(&format!(" — {} i/o errors", p.errors));
                 }
                 s
             }
@@ -175,13 +178,14 @@ pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> Str
                 file_count,
                 dir_count
             );
-            // Surface skipped-entry count from the most recent progress
-            // tick so the user can tell the totals are partial. The
-            // walker keeps `errors` monotonic so the last-seen value is
-            // the final count.
+            // Surface the I/O-error event count from the most recent
+            // progress tick so the user can tell the totals are partial.
+            // The walker keeps `errors` monotonic so the last-seen value
+            // is the final count. Note this is "error events", not
+            // "missing entries" — see ScanProgress::errors.
             match last_progress {
                 Some(p) if p.errors > 0 => {
-                    format!("{base} — {} skipped (i/o errors)", p.errors)
+                    format!("{base} — {} i/o errors", p.errors)
                 }
                 _ => base,
             }
@@ -482,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn status_line_surfaces_skipped_entries_while_scanning() {
+    fn status_line_surfaces_io_error_events_while_scanning() {
         use std::path::PathBuf;
         let progress = ScanProgress {
             entries: 100,
@@ -492,11 +496,11 @@ mod tests {
         };
         let s = status_line(&Status::Scanning, Some(&progress));
         assert!(s.contains("100 entries"), "got {s:?}");
-        assert!(s.contains("7 skipped"), "got {s:?}");
+        assert!(s.contains("7 i/o errors"), "got {s:?}");
     }
 
     #[test]
-    fn status_line_surfaces_skipped_entries_in_done_state() {
+    fn status_line_surfaces_io_error_events_in_done_state() {
         use std::path::PathBuf;
         use std::time::Duration;
         let progress = ScanProgress {
@@ -512,11 +516,11 @@ mod tests {
             dir_count: 7,
         };
         let s = status_line(&done, Some(&progress));
-        assert!(s.contains("3 skipped"), "got {s:?}");
+        assert!(s.contains("3 i/o errors"), "got {s:?}");
     }
 
     #[test]
-    fn status_line_omits_skipped_text_when_no_errors() {
+    fn status_line_omits_error_text_when_no_errors() {
         use std::path::PathBuf;
         let progress = ScanProgress {
             entries: 100,
@@ -525,7 +529,7 @@ mod tests {
             current_path: PathBuf::from("/tmp/x"),
         };
         let s = status_line(&Status::Scanning, Some(&progress));
-        assert!(!s.contains("skipped"), "got {s:?}");
+        assert!(!s.contains("i/o errors"), "got {s:?}");
     }
 
     #[test]
