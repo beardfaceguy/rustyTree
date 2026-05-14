@@ -41,6 +41,15 @@ pub struct Node {
     /// File or directory name (basename only). The root holds the original
     /// scan path's display string.
     pub name: String,
+    /// Lowercased copy of `name`, computed once at construction. Used by
+    /// the view layer's case-insensitive sort and search hot paths so
+    /// they don't re-allocate a fresh `String` for every comparison
+    /// or every visited node. The cost is one extra allocation per
+    /// node at scan time (already dominated by the `String::from`
+    /// for `name` itself); the win is N×log(N) allocations avoided
+    /// per Name-column sort and N allocations avoided per search
+    /// rebuild.
+    pub name_lower: String,
     pub kind: NodeKind,
     /// Logical bytes contributed by this entry alone (file length, or zero
     /// for directories and symlinks).
@@ -81,8 +90,11 @@ impl Node {
         mtime: Option<SystemTime>,
         owner: Option<String>,
     ) -> Self {
+        let name = name.into();
+        let name_lower = name.to_lowercase();
         Self {
-            name: name.into(),
+            name,
+            name_lower,
             kind,
             size_self,
             size_total: size_self,
@@ -376,6 +388,21 @@ mod tests {
         let a_node = t.get(a).unwrap();
         assert_eq!(a_node.file_count, 2);
         assert_eq!(a_node.dir_count, 0);
+    }
+
+    #[test]
+    fn new_leaf_precomputes_name_lower() {
+        // The view layer's sort and search hot paths trust
+        // `name_lower` to be a faithful lowercased copy of `name`.
+        // Tests that exercise those code paths through the public
+        // API would catch a divergence eventually, but it's cheaper
+        // to assert the invariant directly at the source.
+        let n = Node::new_leaf("README.md", NodeKind::File, 0, Some(0), None, None);
+        assert_eq!(n.name, "README.md");
+        assert_eq!(n.name_lower, "readme.md");
+
+        let n = Node::new_leaf("ÄÖÜ", NodeKind::Dir, 0, Some(0), None, None);
+        assert_eq!(n.name_lower, "äöü", "non-ASCII should still lowercase");
     }
 
     #[test]

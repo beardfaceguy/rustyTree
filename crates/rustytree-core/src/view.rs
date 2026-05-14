@@ -259,7 +259,7 @@ pub fn sort_children(children: &mut [NodeId], tree: &Tree, key: SortKey, dir: So
         };
         let ord = match key {
             SortKey::Size => na.size_total.cmp(&nb.size_total),
-            SortKey::Name => na.name.to_lowercase().cmp(&nb.name.to_lowercase()),
+            SortKey::Name => na.name_lower.cmp(&nb.name_lower),
             SortKey::FileCount => na.file_count.cmp(&nb.file_count),
             SortKey::DirCount => na.dir_count.cmp(&nb.dir_count),
             // Allocated/Mtime/Owner are optional; rows without a value
@@ -303,11 +303,16 @@ fn cmp_option_none_last<T: Ord>(a: &Option<T>, b: &Option<T>, dir: SortDir) -> s
 /// Compute the set of node ids whose subtree contains at least one node
 /// whose lowercased name contains `needle`. Includes the matching nodes
 /// themselves and all of their ancestors up to the root.
+///
+/// `needle` must already be lowercased — the caller (`rebuild_visible_rows`)
+/// lowercases the search input once per rebuild, and this function relies
+/// on `Node::name_lower` for the haystack. That asymmetry is intentional:
+/// it lets us avoid re-lowercasing every node's name on every keystroke.
 fn compute_subtree_matches(tree: &Tree, needle: &str) -> HashSet<NodeId> {
     let mut hits: HashSet<NodeId> = HashSet::new();
     for id in tree.iter_ids() {
         if let Some(n) = tree.get(id)
-            && n.name.to_lowercase().contains(needle)
+            && n.name_lower.contains(needle)
         {
             hits.insert(id);
         }
