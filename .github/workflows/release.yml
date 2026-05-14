@@ -10,10 +10,12 @@ on:
       # Match semver-shaped tags only — `v0.1.0`, `v1.2.3`, etc. Stops
       # accidental pushes of placeholders like `vtest`/`vfoo`/`vwip`
       # from spinning up release builds and creating a public draft.
-      # Pre-release suffixes (`v0.1.0-rc.1`) are handled by the second
-      # pattern.
+      # Pre-release suffixes (`v0.1.0-rc.1`, `v0.2.0-beta.3`) match
+      # the second pattern; the `-[0-9A-Za-z.]+` tail requires the
+      # suffix to be non-empty and semver-shaped (no bare `v0.1.0-`).
+      # Patterns kept in sync with `ci.yml`.
       - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      - "v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+"
 
 permissions:
   contents: write
@@ -140,14 +142,17 @@ jobs:
           $ErrorActionPreference = "Stop"
           Compress-Archive -Path $env:STAGE_DIR -DestinationPath "$env:STAGE_DIR.zip" -Force
           $hash = Get-FileHash -Algorithm SHA256 "$env:STAGE_DIR.zip"
-          # Format as `<sha>  <filename>\n` to match `shasum -a 256`
-          # output exactly — including the trailing newline `shasum`
-          # always emits — so coworkers can verify with the same
-          # `shasum -a 256 -c` flow whether they're on Linux/macOS or
-          # Windows + WSL/git-bash. Some `shasum -c` implementations
-          # warn or refuse on missing-newline sidecars.
-          "$($hash.Hash.ToLower())  $env:STAGE_DIR.zip" |
-            Out-File -Encoding ascii "$env:STAGE_DIR.zip.sha256"
+          # Match `shasum -a 256` output byte-for-byte: lowercase
+          # hex, two spaces, filename, trailing LF. PowerShell's
+          # `Out-File` (with or without -NoNewline) writes
+          # platform-default CRLF on Windows, which would either
+          # leave the sidecar without a trailing newline or end it
+          # with `\r\n`. Some `shasum -c` builds warn on the stray
+          # `\r`. `[IO.File]::WriteAllText` with an explicit `\n`
+          # gives us LF-only output that `shasum -a 256 -c` accepts
+          # without complaint on Linux/macOS or Windows + WSL/git-bash.
+          $line = "$($hash.Hash.ToLower())  $env:STAGE_DIR.zip`n"
+          [IO.File]::WriteAllText("$env:STAGE_DIR.zip.sha256", $line)
           Get-Content "$env:STAGE_DIR.zip.sha256"
 
       - name: Upload release assets

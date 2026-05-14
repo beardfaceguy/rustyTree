@@ -50,14 +50,15 @@ dependencies beyond a working terminal.
 If you already have a Rust toolchain, you can install directly from
 the repository. Pin the install to a tag and use `--locked` so the
 build uses the exact `Cargo.lock` from that release rather than
-floating dependencies:
+floating dependencies. Replace `<TAG>` below with the latest tag
+from the [Releases page](https://github.com/beardfaceguy/rustyTree/releases)
+(e.g. `v0.1.0`):
 
 ```sh
-# Replace v0.1.0 with the latest tag from the Releases page.
 cargo install --locked --git https://github.com/beardfaceguy/rustyTree \
-    --tag v0.1.0 -p rustytree-gui
+    --tag <TAG> -p rustytree-gui
 cargo install --locked --git https://github.com/beardfaceguy/rustyTree \
-    --tag v0.1.0 -p rustytree-cli
+    --tag <TAG> -p rustytree-cli
 ```
 
 This drops the binaries into `~/.cargo/bin/`, which should already be on
