@@ -9,12 +9,11 @@ on:
     # tags by `release.yml`) are gated by the same fmt/clippy/test
     # matrix as branch commits. Without this, a tag pointing at a
     # commit that was never on a branch would bypass CI entirely.
-    # Patterns kept in sync with `release.yml` so a tag that runs
-    # the release workflow always also runs CI, and stray
-    # `vfoo`/`vwip`/`vtest` tags burn neither.
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+"
+    # Pattern kept in sync with `release.yml`. Strict semver patterns
+    # (e.g. `v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+`) were rejected by
+    # GitHub's filter-pattern parser — see the comment in
+    # `release.yml` for the full story. `v*` is universally supported.
+    tags: ["v*"]
   pull_request:
     branches: ["**"]
 

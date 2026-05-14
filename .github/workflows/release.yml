@@ -7,15 +7,21 @@ name: Release
 on:
   push:
     tags:
-      # Match semver-shaped tags only — `v0.1.0`, `v1.2.3`, etc. Stops
-      # accidental pushes of placeholders like `vtest`/`vfoo`/`vwip`
-      # from spinning up release builds and creating a public draft.
-      # Pre-release suffixes (`v0.1.0-rc.1`, `v0.2.0-beta.3`) match
-      # the second pattern; the `-[0-9A-Za-z.]+` tail requires the
-      # suffix to be non-empty and semver-shaped (no bare `v0.1.0-`).
-      # Patterns kept in sync with `ci.yml`.
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+"
+      # Use the simple `v*` glob. We previously tried strict semver
+      # patterns like `v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+` to reject
+      # accidental `vfoo`/`vwip` pushes, but GitHub's filter-pattern
+      # parser rejected the second pattern outright with
+      # `invalid tags patterns: v[0-9]+.[0-9]+.[0-9]+-[0-9A-Za-z.]+`
+      # — the documented `+` / `[]` glob support is narrower than the
+      # docs claim, especially for character classes mixing ranges
+      # with literal dots. The first pattern (without the suffix)
+      # may also have been silently rejected; we don't know because
+      # GitHub gives up on the whole `on:` block as soon as any
+      # entry is invalid. Keeping `v*` keeps the trigger simple and
+      # universally supported. If we ever need to reject non-semver
+      # tags, do it as a guard step inside the build job rather than
+      # in the trigger glob.
+      - "v*"
 
 permissions:
   contents: write
