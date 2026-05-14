@@ -49,10 +49,14 @@ pub enum ScanError {
     NotADirectory(PathBuf),
     /// The OS refused to spawn the scan worker thread (e.g. resource
     /// exhaustion). The wrapped `io::Error` is what `Builder::spawn`
-    /// returned.
+    /// returned. `#[source]` lets `Error::source()`-walkers
+    /// (`anyhow::Chain`, `eyre`, etc.) follow the chain to the
+    /// underlying `io::Error`.
     #[error("could not spawn scan worker thread: {0}")]
-    SpawnFailed(std::io::Error),
-    /// Scan was cancelled before it could finish.
+    SpawnFailed(#[source] std::io::Error),
+    /// Scan was cancelled before it could finish. Delivered via the
+    /// channel as [`ScanEvent::Cancelled`]; this variant exists so the
+    /// walker can use `Result<Tree, ScanError>` internally.
     #[error("scan was cancelled")]
     Cancelled,
 }
@@ -102,39 +106,22 @@ impl Drop for ScanHandle {
         // (hung NFS mount, sleeping disk) wouldn't observe the flag for
         // an arbitrary amount of time, and joining would freeze whichever
         // thread is dropping the handle (typically the UI thread on
-        // rescan). The worker will still finish on its own and clean up
-        // its end of the channel; nobody is reading by then.
+        // rescan). The `Option<JoinHandle>` field is dropped with the
+        // struct, which detaches the OS thread automatically.
         self.cancel();
-        // `join` field is just dropped — the OS reaps the thread when it
-        // exits. The `JoinHandle::drop` impl is documented as detaching.
-        let _ = self.join.take();
     }
 }
 
 /// Spawn a worker thread that scans `root` and streams events through the
 /// returned [`ScanHandle`].
 ///
-/// Synchronous failures (`root` doesn't exist / isn't a directory / can't
-/// spawn the worker thread) come back as `Err`. Once the worker is
-/// running, all further outcomes (progress, completion, cancellation,
-/// runtime I/O errors) flow through the [`ScanEvent`] channel.
+/// The only synchronous failure mode is [`ScanError::SpawnFailed`] (the OS
+/// refused a new thread). Filesystem-level problems with `root` (missing,
+/// not a directory) are delivered through the channel as
+/// [`ScanEvent::Error`] — we deliberately don't `try_exists`/`is_dir` on
+/// the caller's thread because the caller may be a UI thread and AGENTS.md
+/// forbids blocking FS I/O there (e.g. against a hung NFS mount).
 pub fn start_scan(root: PathBuf) -> Result<ScanHandle, ScanError> {
-    // Validate up front so a typo'd path produces an immediate, typed
-    // error instead of being routed through the worker thread + channel.
-    // Use `try_exists` so transient I/O errors during the existence check
-    // (e.g. EACCES on the parent dir) don't masquerade as "doesn't exist".
-    match root.try_exists() {
-        Ok(true) => {}
-        Ok(false) => return Err(ScanError::NotFound(root)),
-        // Treat ambiguous existence the same as missing for now. A future
-        // change can add a dedicated variant once we carry richer scan
-        // diagnostics.
-        Err(_) => return Err(ScanError::NotFound(root)),
-    }
-    if !root.is_dir() {
-        return Err(ScanError::NotADirectory(root));
-    }
-
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     let cancel_worker = cancel.clone();
@@ -143,6 +130,26 @@ pub fn start_scan(root: PathBuf) -> Result<ScanHandle, ScanError> {
         .name("rustytree-scan".into())
         .spawn(move || {
             let start = Instant::now();
+            // Validate inside the worker so the syscalls happen off the
+            // caller's thread.
+            match root.try_exists() {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = tx.send(ScanEvent::Error(ScanError::NotFound(root)));
+                    return;
+                }
+                Err(_) => {
+                    // Ambiguous existence (e.g. EACCES on parent dir).
+                    // Treat as not-found for now; a richer diagnostic
+                    // variant can land with task #224's error channel.
+                    let _ = tx.send(ScanEvent::Error(ScanError::NotFound(root)));
+                    return;
+                }
+            }
+            if !root.is_dir() {
+                let _ = tx.send(ScanEvent::Error(ScanError::NotADirectory(root)));
+                return;
+            }
             let tx_progress = tx.clone();
             let mut last_send = Instant::now();
             let progress = move |p: ScanProgress| {

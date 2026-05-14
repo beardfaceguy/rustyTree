@@ -174,8 +174,10 @@ pub fn status_line(status: &Status, last_progress: Option<&ScanProgress>) -> Str
 }
 
 /// Re-flatten the tree into the visible-rows list according to the current
-/// expansion / sort / search state. Auto-expands ancestors of any nodes
-/// matching the search query (case-insensitive substring match).
+/// expansion / sort / search state. While a search is active, ancestors of
+/// any matching nodes are treated as expanded *for this flatten only* —
+/// `state.expanded` is **not** mutated, so clearing the search returns the
+/// tree to whatever the user manually had open before they started typing.
 pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
     state.visible_rows.clear();
     let Some(root) = tree.root() else { return };
@@ -187,13 +189,6 @@ pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
     } else {
         HashSet::new()
     };
-    if filter_active {
-        for id in tree.iter_ids() {
-            if subtree_has_match.contains(&id) {
-                state.expanded.insert(id);
-            }
-        }
-    }
 
     let mut stack: Vec<(NodeId, u16)> = vec![(root, 0)];
     while let Some((id, depth)) = stack.pop() {
@@ -201,9 +196,12 @@ pub fn rebuild_visible_rows(tree: &Tree, state: &mut UiState) {
             continue;
         }
         state.visible_rows.push(RowEntry { id, depth });
-        if state.expanded.contains(&id)
-            && let Some(node) = tree.get(id)
-        {
+        // While the filter is active, every ancestor of a match counts as
+        // "expanded" so the user can see the matching subtree without us
+        // mutating their persistent expansion set.
+        let expanded_for_this_flatten =
+            state.expanded.contains(&id) || (filter_active && subtree_has_match.contains(&id));
+        if expanded_for_this_flatten && let Some(node) = tree.get(id) {
             let mut children = node.children.clone();
             sort_children(&mut children, tree, state.sort_key, state.sort_dir);
             for c in children.iter().rev() {
@@ -349,6 +347,34 @@ mod tests {
         assert!(names.contains(&"beta"), "got {names:?}");
         assert!(!names.contains(&"alpha"), "got {names:?}");
         assert!(!names.contains(&"c.bin"), "got {names:?}");
+    }
+
+    #[test]
+    fn clearing_search_restores_prior_expansion() {
+        // The user manually expanded only `root`. They run a search
+        // for "b1" (which is buried under `beta`), then clear the
+        // search. After clearing, `state.expanded` should be exactly
+        // what it was before they started typing — `beta` should NOT
+        // remain expanded.
+        let tree = sample();
+        let root = tree.root().unwrap();
+        let mut state = UiState::default();
+        state.expanded.insert(root);
+        let baseline = state.expanded.clone();
+
+        // Apply a search that, in the old code, auto-inserted matches
+        // and ancestors into state.expanded.
+        state.search = "b1".into();
+        rebuild_visible_rows(&tree, &mut state);
+
+        // Clear the search and re-flatten.
+        state.search.clear();
+        rebuild_visible_rows(&tree, &mut state);
+
+        assert_eq!(
+            state.expanded, baseline,
+            "search should not persist into state.expanded"
+        );
     }
 
     #[test]

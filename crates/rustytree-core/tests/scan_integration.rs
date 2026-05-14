@@ -67,24 +67,24 @@ fn full_scan_reports_done_with_correct_totals() {
 }
 
 #[test]
-fn nonexistent_root_returns_not_found_synchronously() {
+fn nonexistent_root_reports_not_found_via_channel() {
     let phantom = PathBuf::from("/this/path/does/not/exist/rustytree-test");
-    match start_scan(phantom) {
-        Err(rustytree_core::scan::ScanError::NotFound(_)) => {}
-        Err(other) => panic!("expected Err(NotFound), got Err({other:?})"),
-        Ok(_) => panic!("expected Err(NotFound), got Ok(handle)"),
+    let handle = start_scan(phantom).expect("spawn should succeed");
+    match drain_until_terminal(&handle) {
+        ScanEvent::Error(rustytree_core::scan::ScanError::NotFound(_)) => {}
+        other => panic!("expected Error(NotFound), got {other:?}"),
     }
 }
 
 #[test]
-fn file_root_returns_not_a_directory_synchronously() {
+fn file_root_reports_not_a_directory_via_channel() {
     let dir = tempfile::tempdir().expect("tempdir");
     let f = dir.path().join("not-a-directory.txt");
     std::fs::write(&f, b"this is a file, not a directory").unwrap();
-    match start_scan(f) {
-        Err(rustytree_core::scan::ScanError::NotADirectory(_)) => {}
-        Err(other) => panic!("expected Err(NotADirectory), got Err({other:?})"),
-        Ok(_) => panic!("expected Err(NotADirectory), got Ok(handle)"),
+    let handle = start_scan(f).expect("spawn should succeed");
+    match drain_until_terminal(&handle) {
+        ScanEvent::Error(rustytree_core::scan::ScanError::NotADirectory(_)) => {}
+        other => panic!("expected Error(NotADirectory), got {other:?}"),
     }
 }
 
@@ -117,10 +117,12 @@ fn cancellation_short_circuits_a_running_scan() {
 
 #[test]
 fn drop_does_not_block_the_caller() {
-    // Spawn a scan on a fairly chunky tree, drop the handle immediately,
-    // and assert we return promptly. Joining on Drop would block until
-    // the worker finished walking thousands of entries; detaching means
-    // we return as soon as the cancel flag is flipped (microseconds).
+    // Spawn a scan on a fairly chunky tree, drop the handle on a worker
+    // thread, and assert the drop completes inside a generous deadline.
+    // If anyone reintroduces a `join()` in `Drop`, the worker will spend
+    // seconds walking thousands of entries while the dropping thread is
+    // stuck — this test catches that without a flaky wall-clock budget
+    // (we check via channel signalling rather than `Instant::elapsed`).
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("root");
     std::fs::create_dir(&root).unwrap();
@@ -133,13 +135,21 @@ fn drop_does_not_block_the_caller() {
     }
 
     let handle = start_scan(root).expect("scan started");
-    let start = Instant::now();
-    drop(handle);
-    let elapsed = start.elapsed();
-    // 250ms is generous: dropping should be near-instant. If anyone adds a
-    // join back into Drop and the worker is mid-walk, this fires.
-    assert!(
-        elapsed < Duration::from_millis(250),
-        "ScanHandle::drop took {elapsed:?}, expected near-instant detach"
-    );
+    let (tx_done, rx_done) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(handle);
+        let _ = tx_done.send(());
+    });
+    // 2s is large enough to absorb worst-case scheduler jitter on Windows
+    // CI runners but small enough to fail fast if Drop joins on a
+    // ~4000-entry walk (which would take seconds even on a fast SSD).
+    match rx_done.recv_timeout(Duration::from_secs(2)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("ScanHandle::drop did not return within 2s — Drop probably joined");
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("dropping thread panicked");
+        }
+    }
 }

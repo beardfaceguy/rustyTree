@@ -85,10 +85,10 @@ pub fn build_tree(
             // the latter would silently overwrite the root in release
             // builds (the `debug_assert!` in `Tree::insert` is compiled
             // out under `--release`).
-            match path.parent().and_then(|p| path_to_id.get(p).copied()) {
-                Some(p) => Some(p),
-                None => continue,
-            }
+            let Some(p) = path.parent().and_then(|p| path_to_id.get(p).copied()) else {
+                continue;
+            };
+            Some(p)
         };
 
         let id = tree.insert(parent, node);

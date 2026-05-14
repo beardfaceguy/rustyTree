@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui;
-use rustytree_core::scan::{ScanError, ScanEvent, ScanHandle, Tree, start_scan};
+use rustytree_core::scan::{ScanEvent, ScanHandle, Tree, start_scan};
 use rustytree_core::view::{ColumnKind, Status, UiState};
 
 use crate::ui;
@@ -94,7 +94,7 @@ impl RustyTreeApp {
     pub fn start_scan_from_input(&mut self) {
         let path = PathBuf::from(self.path_input.trim());
         if path.as_os_str().is_empty() {
-            self.status = Status::Error(ScanError::NotFound(path).to_string());
+            self.status = Status::Error("no path entered — type one or click Browse".into());
             return;
         }
         self.tree = None;

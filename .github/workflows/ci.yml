@@ -17,37 +17,26 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  lint:
-    name: fmt + clippy (linux)
+  fmt:
+    name: cargo fmt (linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install eframe build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libxkbcommon-dev \
-            libxkbcommon-x11-0 \
-            libwayland-dev \
-            libgl1-mesa-dev
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+          components: rustfmt
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
   test:
-    name: test (${{ matrix.os }})
+    # Runs cargo clippy + cargo test + cargo build --release on every
+    # supported OS. Keeping clippy in this matrix (rather than only on
+    # Linux) catches platform-conditional lints in src/scan/platform.rs and
+    # other cfg-gated code that only Windows/macOS see.
+    name: clippy + test + build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -68,11 +57,16 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
         run: cargo test --workspace

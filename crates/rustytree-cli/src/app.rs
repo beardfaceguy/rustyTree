@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rustytree_core::scan::{ScanError, ScanEvent, ScanHandle, Tree, start_scan};
+use rustytree_core::scan::{ScanEvent, ScanHandle, Tree, start_scan};
 use rustytree_core::view::{
     SortDir, SortKey, Status, UiState, rebuild_visible_rows, toggle_expand,
 };
@@ -242,7 +242,8 @@ impl RustyTreeApp {
 
     fn start_scan(&mut self) {
         if self.path.as_os_str().is_empty() {
-            self.status = Status::Error(ScanError::NotFound(self.path.clone()).to_string());
+            self.status =
+                Status::Error("no path configured — pass a directory as the first argument".into());
             return;
         }
         self.tree = None;

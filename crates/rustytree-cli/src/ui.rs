@@ -401,8 +401,11 @@ fn compute_widths(total: u16) -> Vec<u16> {
     widths
 }
 
-/// Right-pad numeric columns and left-pad text columns to `width` chars,
-/// truncating with an ellipsis if the value is longer than the cell.
+/// Pad `text` to exactly `width` characters: numeric columns get the
+/// padding on the **left** so digits right-align under each other, text
+/// columns (Name, Owner, Mtime) get the padding on the **right** so they
+/// left-align flush with the column header. Values longer than `width` are
+/// truncated with an ellipsis.
 fn pad_to_width(text: &str, width: usize, kind: ColumnKind) -> String {
     let n = text.chars().count();
     if n == width {
