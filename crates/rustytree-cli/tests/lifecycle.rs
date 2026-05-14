@@ -46,13 +46,22 @@ fn cancel_with_no_scan_running_is_a_no_op() {
 }
 
 #[test]
-fn rescanning_resets_visible_rows_and_keeps_search_string() {
+fn rescanning_keeps_search_string_and_rebuilds_visible_rows() {
     let fixture = make_fixture_tree();
     let mut app = scan_fixture(fixture.path());
 
-    // Stash a search query and a sort tweak, then trigger a rescan.
-    app.ui.search = "alpha".into();
-    app.ui.rows_dirty = true;
+    // Type a search query the same way the user would, via the
+    // public command path. The query is the bit we want to outlive
+    // a rescan; everything else (expanded set, selection, visible
+    // rows) should be reset.
+    app.dispatch(Command::EnterSearch);
+    for c in "alpha".chars() {
+        app.dispatch(Command::SearchPush(c));
+    }
+    app.dispatch(Command::SearchApply);
+    assert_eq!(app.ui.search, "alpha");
+
+    // Trigger a rescan and pump it to completion.
     app.dispatch(Command::StartScan);
     common::run_to_done(&mut app);
 
@@ -66,6 +75,14 @@ fn rescanning_resets_visible_rows_and_keeps_search_string() {
     assert_eq!(
         app.ui.search, "alpha",
         "search query should survive a rescan"
+    );
+    // The visible row list must be rebuilt by `poll_scan` after the
+    // new Done event — empty visible_rows would mean we regressed
+    // the bug fixed alongside this test suite (see
+    // `poll_scan_populates_visible_rows_after_done_event`).
+    assert!(
+        !app.ui.visible_rows.is_empty(),
+        "rescan must rebuild visible_rows; got an empty list"
     );
 }
 

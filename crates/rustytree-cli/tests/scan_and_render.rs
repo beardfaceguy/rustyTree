@@ -80,18 +80,17 @@ fn fixture_root_is_pre_expanded_so_top_level_children_are_visible() {
 }
 
 #[test]
-fn render_does_not_panic_on_zero_size_terminal() {
-    // ratatui will hand us a 0×0 frame in degenerate cases (terminal
-    // resized to nothing, or a sub-pane collapsed to 0). The render
-    // path has size guards (see `render_body` and
-    // `render_column_header` in ui.rs); this test just confirms it
-    // doesn't blow up.
+fn render_does_not_panic_on_minimum_size_terminal() {
+    // `TestBackend` rejects width/height of 0, so the smallest
+    // viable surface is 1×1. That still forces every draw helper to
+    // take its "area too small" branch (see `render_body` and
+    // `render_column_header` in ui.rs, both of which early-return
+    // when `area.width == 0` or `area.height == 0`). The point of
+    // the test is the *guard*, not the size literally being 0:
+    // every layout split here yields sub-rects that the renderer
+    // has to handle without panicking.
     let fixture = make_fixture_tree();
     let mut app = scan_fixture(fixture.path());
-
-    // Width 1 / height 1 is the smallest a TestBackend will accept;
-    // a 0-width TestBackend panics inside the buffer. 1×1 still
-    // forces every draw helper to take its "area too small" branch.
     let lines = render_lines(&mut app, 1, 1);
     assert_eq!(lines.len(), 1);
 }

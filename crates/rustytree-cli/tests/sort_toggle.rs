@@ -93,9 +93,9 @@ fn sort_by_size_desc_puts_the_largest_top_level_entry_first() {
         press(&mut app, KeyCode::Char('2'));
     }
 
-    // gamma (400 + dir) > beta (500) > alpha (100).
-    // Wait — beta has 200 + 300 = 500 bytes; gamma has 400.
-    // Largest is beta. Sanity-check.
+    // Top-level sizes: beta = 200 + 300 = 500 bytes,
+    // gamma = 400 bytes, alpha.txt = 100 bytes. Size-Desc should
+    // therefore order them beta, gamma, alpha.txt.
     let names: Vec<String> = app
         .ui
         .visible_rows
