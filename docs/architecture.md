@@ -177,8 +177,9 @@ pub struct Node {
     pub size_self: u64,
     pub size_total: u64,            // populated by aggregate()
     pub alloc_self: Option<u64>,    // None when the platform can't tell us
-    pub alloc_total: Option<u64>,   // populated by aggregate(); None if any
-                                    // descendant is None
+    pub alloc_total: Option<u64>,   // populated by aggregate(); None if
+                                    // alloc_self or any descendant's
+                                    // alloc_total is None
     pub file_count: u64,            // descendants only
     pub dir_count: u64,             // descendants only
     pub mtime: Option<SystemTime>,

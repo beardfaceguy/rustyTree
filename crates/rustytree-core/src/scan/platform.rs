@@ -26,8 +26,8 @@ pub struct PlatformMetadata {
     /// derived from a `std::fs::Metadata` alone — specifically Windows,
     /// which needs a separate `GetCompressedFileSize`/`FILE_STANDARD_INFO`
     /// call to know the real allocation. The view layer renders `None`
-    /// as `"n/a"` and the sort key sinks `None`-rows to the bottom in
-    /// both directions.
+    /// as [`crate::format::NA_PLACEHOLDER`] and the sort key sinks
+    /// `None`-rows to the bottom in both directions.
     pub allocated_bytes: Option<u64>,
     /// Last modification time, if the OS reported one.
     pub mtime: Option<SystemTime>,
@@ -75,8 +75,9 @@ fn extract_impl(md: &Metadata) -> PlatformMetadata {
 // Allocated column — exactly the divergence we don't want. A real
 // `GetCompressedFileSize` / `FILE_STANDARD_INFO` lookup will land with
 // the Windows on-disk-size task; until then `None` makes the
-// unknown-ness explicit at every UI surface, and the test below
-// exercises this branch on whichever non-unix host CI is running on.
+// unknown-ness explicit at every UI surface. The
+// `allocated_bytes_is_none_on_non_unix` test below is gated on
+// `cfg(not(unix))` so it covers Windows *and* any other non-unix host.
 #[cfg(not(unix))]
 fn extract_impl(md: &Metadata) -> PlatformMetadata {
     PlatformMetadata {
@@ -128,11 +129,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
-    fn allocated_bytes_is_none_on_windows() {
-        // The current Windows branch deliberately returns None until a
-        // real GetCompressedFileSize lookup lands. This guards against
-        // someone "fixing" it by dropping md.len() back in.
+    #[cfg(not(unix))]
+    fn allocated_bytes_is_none_on_non_unix() {
+        // The non-unix branch (Windows today, anything else exotic
+        // tomorrow) deliberately returns None until a real
+        // GetCompressedFileSize / equivalent lookup lands. This guards
+        // against someone "fixing" the Allocated column by dropping
+        // md.len() back in.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("hello.bin");
         std::fs::write(&path, b"hello").expect("write");
