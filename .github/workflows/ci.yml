@@ -23,13 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        # Channel comes from rust-toolchain.toml at the repo root.
-        # Components must still be listed here so the action installs them.
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.95.0
-          components: rustfmt
+      - name: Install pinned Rust toolchain
+        # GitHub-hosted runners ship with rustup preinstalled. `rustup show
+        # active-toolchain` materialises the channel + components named in
+        # rust-toolchain.toml at the repo root, which is the single source
+        # of truth for the toolchain version and components.
+        run: rustup show active-toolchain
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
@@ -58,13 +57,10 @@ jobs:
             libwayland-dev \
             libgl1-mesa-dev
 
-      - name: Install Rust toolchain
-        # Channel comes from rust-toolchain.toml at the repo root.
-        # Components must still be listed here so the action installs them.
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.95.0
-          components: clippy
+      - name: Install pinned Rust toolchain
+        # See note in the fmt job: rust-toolchain.toml is the single
+        # source of truth for both channel and components.
+        run: rustup show active-toolchain
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
