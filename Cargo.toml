@@ -10,7 +10,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/rustyTree"
+repository = "https://github.com/beardfaceguy/rustyTree"
 description = "Cross-platform GUI/CLI disk-usage analyzer in Rust, modeled after JAM Software TreeSize."
 
 # Versions for crates shared between front-ends and the core library are pinned

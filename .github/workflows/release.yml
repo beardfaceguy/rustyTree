@@ -1,0 +1,147 @@
+name: Release
+
+# Triggered when we push a `v*` tag (e.g. `v0.1.0`).
+# Each matrix job builds release binaries on its target OS and uploads
+# them to the GitHub Release for that tag. Concurrent uploads to the
+# same release are fine — `softprops/action-gh-release` handles that.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target-name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target-name: linux-x86_64
+            archive-ext: tar.gz
+            bin-suffix: ""
+          - os: macos-latest
+            target-name: macos-universal
+            archive-ext: tar.gz
+            bin-suffix: ""
+          - os: windows-latest
+            target-name: windows-x86_64
+            archive-ext: zip
+            bin-suffix: ".exe"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux eframe build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev \
+            libxkbcommon-x11-0 \
+            libwayland-dev \
+            libgl1-mesa-dev
+
+      - name: Install pinned Rust toolchain
+        # Reads channel + components from rust-toolchain.toml. Same action
+        # we use in ci.yml; see that file for context on why we don't
+        # call rustup directly.
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - name: Add macOS x86_64 target (for universal binary)
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build release binaries (Linux / Windows)
+        if: runner.os != 'macOS'
+        # `--bins` builds only the binary targets; --release optimises;
+        # --workspace pulls in both rustytree-gui and rustytree-cli.
+        run: cargo build --workspace --release --bins
+
+      - name: Build release binaries (macOS, both arches + lipo)
+        if: runner.os == 'macOS'
+        # macos-latest runners are arm64; we cross-compile to x86_64 as
+        # well and use `lipo` to merge them into a single universal
+        # binary that runs on both Apple Silicon and Intel Macs.
+        run: |
+          set -eux
+          cargo build --workspace --release --bins --target aarch64-apple-darwin
+          cargo build --workspace --release --bins --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          for bin in rustytree-gui rustytree-cli; do
+            lipo -create \
+              "target/aarch64-apple-darwin/release/$bin" \
+              "target/x86_64-apple-darwin/release/$bin" \
+              -output "target/universal-apple-darwin/release/$bin"
+            file "target/universal-apple-darwin/release/$bin"
+          done
+
+      - name: Stage archive contents
+        shell: bash
+        # `bash` everywhere — Windows runners ship a usable bash via Git
+        # for Windows. Keeps this step OS-uniform.
+        env:
+          TARGET_NAME: ${{ matrix.target-name }}
+          BIN_SUFFIX: ${{ matrix.bin-suffix }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eux
+          STAGE="rustytree-${REF_NAME}-${TARGET_NAME}"
+          mkdir -p "$STAGE"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            BIN_DIR="target/universal-apple-darwin/release"
+          else
+            BIN_DIR="target/release"
+          fi
+          cp "$BIN_DIR/rustytree-gui${BIN_SUFFIX}" "$STAGE/"
+          cp "$BIN_DIR/rustytree-cli${BIN_SUFFIX}" "$STAGE/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
+          ls -la "$STAGE/"
+          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Create archive (tar.gz)
+        if: matrix.archive-ext == 'tar.gz'
+        shell: bash
+        env:
+          STAGE_DIR: ${{ env.STAGE_DIR }}
+        run: |
+          set -eux
+          tar -czf "${STAGE_DIR}.tar.gz" "${STAGE_DIR}"
+          shasum -a 256 "${STAGE_DIR}.tar.gz" > "${STAGE_DIR}.tar.gz.sha256"
+          cat "${STAGE_DIR}.tar.gz.sha256"
+
+      - name: Create archive (zip)
+        if: matrix.archive-ext == 'zip'
+        shell: pwsh
+        # PowerShell on the Windows runner. Compress-Archive is built in;
+        # Get-FileHash gives us the SHA256 sidecar.
+        env:
+          STAGE_DIR: ${{ env.STAGE_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Compress-Archive -Path $env:STAGE_DIR -DestinationPath "$env:STAGE_DIR.zip" -Force
+          $hash = Get-FileHash -Algorithm SHA256 "$env:STAGE_DIR.zip"
+          # Format as `<sha>  <filename>` to match `shasum -a 256` output
+          # so coworkers can verify with the same `shasum -a 256 -c` flow
+          # whether they're on Linux/macOS or Windows + WSL/git-bash.
+          "$($hash.Hash.ToLower())  $env:STAGE_DIR.zip" |
+            Out-File -Encoding ascii -NoNewline "$env:STAGE_DIR.zip.sha256"
+          Get-Content "$env:STAGE_DIR.zip.sha256"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.STAGE_DIR }}.${{ matrix.archive-ext }}
+            ${{ env.STAGE_DIR }}.${{ matrix.archive-ext }}.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true

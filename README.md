@@ -6,9 +6,70 @@ directory, sort folders by size, drill in, find what's eating your disk —
 either in a desktop window (`rustytree-gui`) or right in your terminal
 (`rustytree-cli`).
 
-> Status: GUI is feature-complete for MVP scope (a)+(c) — sortable,
-> searchable, virtualized size tree with extra columns. CLI is in active
-> development. See the Vikunja project "rustyTree" for current backlog.
+> Status: both front-ends are feature-complete for MVP scope —
+> sortable, searchable, virtualized size tree with extra columns
+> (file count, mtime, allocated vs logical size, owner) and
+> cancellable scans. CI runs on Linux, macOS, and Windows; release
+> binaries are auto-built for all three on tagged releases.
+
+## Install
+
+### Download a prebuilt binary
+
+The simplest way to try `rustyTree` is to grab a release archive from
+the [Releases page](https://github.com/beardfaceguy/rustyTree/releases).
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `rustytree-vX.Y.Z-linux-x86_64.tar.gz` |
+| macOS (universal: Apple Silicon + Intel) | `rustytree-vX.Y.Z-macos-universal.tar.gz` |
+| Windows x86_64 | `rustytree-vX.Y.Z-windows-x86_64.zip` |
+
+Each archive contains both binaries (`rustytree-gui` and `rustytree-cli`)
+plus the licence files. A `.sha256` sidecar lives next to every archive
+on the release page so you can verify the download:
+
+```sh
+# Linux / macOS
+shasum -a 256 -c rustytree-vX.Y.Z-linux-x86_64.tar.gz.sha256
+```
+
+After extraction, run the GUI or CLI directly — no install step:
+
+```sh
+./rustytree-gui          # desktop window
+./rustytree-cli /some/path   # interactive terminal UI
+```
+
+On Linux you may need a few system libraries for the GUI; see the
+[Linux build deps](#linux-build-deps) section. The CLI has no system
+dependencies beyond a working terminal.
+
+### Install with `cargo`
+
+If you already have a Rust toolchain, you can install directly from
+the repository:
+
+```sh
+cargo install --git https://github.com/beardfaceguy/rustyTree --bin rustytree-gui
+cargo install --git https://github.com/beardfaceguy/rustyTree --bin rustytree-cli
+```
+
+This drops the binaries into `~/.cargo/bin/`, which should already be on
+your `PATH` if you installed Rust via [rustup](https://rustup.rs).
+
+### Build from source
+
+```sh
+git clone https://github.com/beardfaceguy/rustyTree
+cd rustyTree
+cargo build --release --workspace
+./target/release/rustytree-gui
+./target/release/rustytree-cli
+```
+
+`rust-toolchain.toml` pins the exact Rust version (currently `1.95.0`);
+rustup auto-installs it on first build.
 
 ## Workspace layout
 
@@ -50,30 +111,13 @@ cancellation, extra columns, search/filter — across both front-ends.
 Out (deferred): treemap, sunburst, snapshot/compare, export, scheduled
 rescans.
 
-## Build & run
+## Develop
 
-Requires a stable Rust toolchain. The exact version is pinned in
-`rust-toolchain.toml` (currently `1.95.0`); rustup will auto-install it
-on first build.
-
-### Desktop GUI
+### Run from source
 
 ```sh
 cargo run -p rustytree-gui
-```
-
-### Terminal CLI
-
-```sh
 cargo run -p rustytree-cli
-```
-
-### Release builds
-
-```sh
-cargo build --release --workspace
-./target/release/rustytree-gui
-./target/release/rustytree-cli
 ```
 
 ### Test the whole workspace
@@ -85,7 +129,7 @@ cargo test --workspace
 ### Linux build deps
 
 `eframe` (used only by `rustytree-gui`) needs the standard
-OpenGL / Wayland / X libraries:
+OpenGL / Wayland / X libraries. On Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential libxkbcommon-dev libgl1-mesa-dev \
@@ -123,6 +167,38 @@ collaborators without the CLI are never blocked.
 
 Source lives in `scripts/cursor-review.sh` and `.git-hooks/pre-commit`.
 
+## Releasing
+
+Releases are tag-driven. Pushing a tag matching `v*` triggers
+`.github/workflows/release.yml`, which builds release binaries on
+Linux, macOS (universal arm64+x86_64 via `lipo`), and Windows, then
+uploads each archive plus a SHA256 sidecar to the matching GitHub
+Release. To cut a new release:
+
+```sh
+git tag v0.1.1   # match Cargo.toml workspace.package.version
+git push origin v0.1.1
+```
+
+The workflow takes ~5–10 minutes; once it's green, the assets appear
+on https://github.com/beardfaceguy/rustyTree/releases.
+
 ## License
 
-TBD.
+Dual-licensed under either of:
+
+- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
+  http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  http://opensource.org/licenses/MIT)
+
+at your option. This is the [Rust ecosystem
+default](https://rust-lang.github.io/api-guidelines/necessities.html#crate-and-its-dependencies-have-a-permissive-license-c-permissive)
+and lets downstream users pick whichever fits their project.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
