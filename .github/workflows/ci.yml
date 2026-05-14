@@ -5,6 +5,11 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # Tag pushes also run CI so release artifacts (built from those
+    # tags by `release.yml`) are gated by the same fmt/clippy/test
+    # matrix as branch commits. Without this, a tag pointing at a
+    # commit that was never on a branch would bypass CI entirely.
+    tags: ["v*"]
   pull_request:
     branches: ["**"]
 

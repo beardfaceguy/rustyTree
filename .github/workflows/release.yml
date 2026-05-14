@@ -7,13 +7,23 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Match semver-shaped tags only — `v0.1.0`, `v1.2.3`, etc. Stops
+      # accidental pushes of placeholders like `vtest`/`vfoo`/`vwip`
+      # from spinning up release builds and creating a public draft.
+      # Pre-release suffixes (`v0.1.0-rc.1`) are handled by the second
+      # pattern.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # Match ci.yml — release artifacts must clear the same warning bar
+  # as gated commits, otherwise a release could ship code containing
+  # warnings CI would have rejected.
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   build:
@@ -130,11 +140,14 @@ jobs:
           $ErrorActionPreference = "Stop"
           Compress-Archive -Path $env:STAGE_DIR -DestinationPath "$env:STAGE_DIR.zip" -Force
           $hash = Get-FileHash -Algorithm SHA256 "$env:STAGE_DIR.zip"
-          # Format as `<sha>  <filename>` to match `shasum -a 256` output
-          # so coworkers can verify with the same `shasum -a 256 -c` flow
-          # whether they're on Linux/macOS or Windows + WSL/git-bash.
+          # Format as `<sha>  <filename>\n` to match `shasum -a 256`
+          # output exactly — including the trailing newline `shasum`
+          # always emits — so coworkers can verify with the same
+          # `shasum -a 256 -c` flow whether they're on Linux/macOS or
+          # Windows + WSL/git-bash. Some `shasum -c` implementations
+          # warn or refuse on missing-newline sidecars.
           "$($hash.Hash.ToLower())  $env:STAGE_DIR.zip" |
-            Out-File -Encoding ascii -NoNewline "$env:STAGE_DIR.zip.sha256"
+            Out-File -Encoding ascii "$env:STAGE_DIR.zip.sha256"
           Get-Content "$env:STAGE_DIR.zip.sha256"
 
       - name: Upload release assets
