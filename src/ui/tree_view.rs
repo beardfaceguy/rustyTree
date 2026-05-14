@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 use rustytree::format;
-use rustytree::scan::{NodeId, NodeKind, Tree};
+use rustytree::scan::{NodeId, Tree};
 
 use crate::app::{COLUMNS, ColumnKind, RowEntry, RustyTreeApp, SortDir, SortKey};
 
@@ -213,13 +213,7 @@ fn render_name_cell(
     ui.add_space(indent);
 
     let has_children = !node.children.is_empty();
-    let chevron = if !has_children {
-        "  "
-    } else if expanded {
-        "\u{25BE} "
-    } else {
-        "\u{25B8} "
-    };
+    let chevron = chevron_glyph(has_children, expanded);
 
     let chevron_btn = egui::Button::new(chevron).frame(false);
     let resp = ui.add_enabled(has_children, chevron_btn);
@@ -227,16 +221,8 @@ fn render_name_cell(
         *clicked_chevron = true;
     }
 
-    let icon = match node.kind {
-        NodeKind::Dir if expanded => "\u{1F4C2} ",
-        NodeKind::Dir => "\u{1F4C1} ",
-        NodeKind::File => "\u{1F4C4} ",
-        NodeKind::Symlink => "\u{1F517} ",
-    };
-
-    let remaining = (width - indent - 36.0).max(40.0);
-    let label_text = format!("{icon}{}", node.name);
-    let label = egui::Label::new(label_text).truncate();
+    let remaining = (width - indent - 24.0).max(40.0);
+    let label = egui::Label::new(node.name.clone()).truncate();
     ui.allocate_ui_with_layout(
         egui::vec2(remaining, ROW_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -244,6 +230,20 @@ fn render_name_cell(
             ui.add(label);
         },
     );
+}
+
+/// Pick the chevron glyph for a row.
+///
+/// Pure ASCII so it always renders in egui's embedded font; previously this
+/// used U+25B8 / U+25BE which fell back to `.notdef` boxes ("tofu") on
+/// systems whose default font lacked those glyphs. The two-space variants
+/// keep column alignment consistent across rows with and without a toggle.
+fn chevron_glyph(has_children: bool, expanded: bool) -> &'static str {
+    match (has_children, expanded) {
+        (false, _) => "  ",
+        (true, true) => "- ",
+        (true, false) => "+ ",
+    }
 }
 
 fn render_percent_cell(ui: &mut egui::Ui, size_total: u64, root_total: u64, width: f32) {
@@ -389,6 +389,18 @@ mod tests {
         t.insert(Some(r), file("c.bin", 1000));
         t.aggregate();
         t
+    }
+
+    #[test]
+    fn chevron_is_plus_when_collapsed_and_minus_when_expanded() {
+        assert_eq!(chevron_glyph(true, false), "+ ");
+        assert_eq!(chevron_glyph(true, true), "- ");
+    }
+
+    #[test]
+    fn chevron_is_blank_when_no_children_regardless_of_expanded() {
+        assert_eq!(chevron_glyph(false, false), "  ");
+        assert_eq!(chevron_glyph(false, true), "  ");
     }
 
     #[test]
