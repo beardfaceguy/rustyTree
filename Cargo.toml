@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/rustytree-core",
     "crates/rustytree-gui",
-    # "crates/rustytree-cli" added in a later commit
+    "crates/rustytree-cli",
 ]
 
 [workspace.package]

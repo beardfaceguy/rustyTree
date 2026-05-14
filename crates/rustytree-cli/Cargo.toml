@@ -1,0 +1,17 @@
+[package]
+name = "rustytree-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Interactive terminal UI front-end for rustyTree (ratatui + crossterm)."
+
+[[bin]]
+name = "rustytree-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+rustytree-core = { workspace = true }
