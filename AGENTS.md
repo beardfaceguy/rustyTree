@@ -113,7 +113,13 @@ rustyTree/
 │   │           ├── toolbar.rs         # path + Browse + Scan/Cancel + search
 │   │           └── status.rs          # bottom bar
 │   └── rustytree-cli/                 # ratatui/crossterm binary
-│       └── ... (added in a later task)
+│       ├── Cargo.toml
+│       ├── README.md                  # CLI keybindings + manual checklist
+│       └── src/{main,app,ui}.rs
+├── .git-hooks/
+│   └── pre-commit                     # opt-in: exec scripts/cursor-review.sh
+├── scripts/
+│   └── cursor-review.sh               # Cursor `agent` CLI staged-diff review
 └── .github/workflows/ci.yml           # workspace-wide fmt/clippy/test/build
 ```
 
@@ -295,6 +301,41 @@ Upstream tracking:
   ignored on `create`)
 
 ## Cursor tools and workarounds
+
+### Pre-commit AI review
+
+The repo ships an opt-in Cursor-CLI-powered pre-commit hook in
+`.git-hooks/pre-commit` (a one-line shim) plus `scripts/cursor-review.sh`
+(the actual review logic). When enabled, every `git commit` runs the
+staged diff through `agent --mode=ask` against the rules in this file
+plus anything under `.cursor/rules/`, and prints findings grouped as
+**Blockers / Warnings / Nits**.
+
+Activation is per-clone (the hook config is intentionally not
+auto-applied):
+
+```sh
+git config core.hooksPath .git-hooks
+```
+
+Default behaviour is **warn-only**: failing reviews print but don't
+block the commit. Knobs:
+
+- `CURSOR_REVIEW_BLOCK=1` — make a `FAIL` verdict actually fail the commit.
+- `CURSOR_REVIEW_SKIP=1` — bypass for this commit (WIP / squash prep).
+- `CURSOR_REVIEW_MAX_BYTES=N` — skip review for diffs over `N` bytes (default 200 000).
+- `CURSOR_REVIEW_MODEL=<slug>` — override which model `agent` uses.
+
+The hook **silently no-ops if the `agent` CLI isn't installed**, so a
+collaborator who hasn't installed the Cursor CLI is never blocked from
+committing. The script also bails gracefully when `python3` isn't
+available (it just prints the raw model output without the deterministic
+verdict gate).
+
+If you're an agent making changes here: the review prompt is in
+`scripts/cursor-review.sh` and is designed to emit one
+`[BLOCKER]/[WARNING]/[NIT]` line per issue and *nothing else* — keep
+that contract intact so the python3 grouping/verdict logic works.
 
 ### Recovering chat history after moving a workspace folder
 
