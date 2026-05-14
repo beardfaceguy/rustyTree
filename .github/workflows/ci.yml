@@ -21,7 +21,7 @@ jobs:
     name: cargo fmt (linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install pinned Rust toolchain
         # `actions-rust-lang/setup-rust-toolchain` reads rust-toolchain.toml
@@ -50,7 +50,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux eframe build deps
         if: runner.os == 'Linux'
