@@ -241,14 +241,39 @@ pub fn sort_children(children: &mut [NodeId], tree: &Tree, key: SortKey, dir: So
             SortKey::Name => na.name.to_lowercase().cmp(&nb.name.to_lowercase()),
             SortKey::FileCount => na.file_count.cmp(&nb.file_count),
             SortKey::DirCount => na.dir_count.cmp(&nb.dir_count),
-            SortKey::Mtime => na.mtime.cmp(&nb.mtime),
-            SortKey::Owner => na.owner.cmp(&nb.owner),
+            // Mtime/Owner are optional; rows without a value should always
+            // sort to the bottom regardless of direction. The naive
+            // `Option::cmp` orders `None < Some(_)`, which means flipping
+            // direction floats unknown rows to the top — rarely what users
+            // want when sorting.
+            SortKey::Mtime => return cmp_option_none_last(&na.mtime, &nb.mtime, dir),
+            SortKey::Owner => return cmp_option_none_last(&na.owner, &nb.owner, dir),
         };
         match dir {
             SortDir::Asc => ord,
             SortDir::Desc => ord.reverse(),
         }
     });
+}
+
+/// Compare two `Option<T>` values such that `None` is always treated as
+/// "greater" than any `Some(_)` — i.e. unknown rows fall to the bottom of
+/// the sorted output in *both* `Asc` and `Desc`. Direction only flips
+/// the order between `Some` values.
+fn cmp_option_none_last<T: Ord>(a: &Option<T>, b: &Option<T>, dir: SortDir) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (Some(x), Some(y)) => {
+            let ord = x.cmp(y);
+            match dir {
+                SortDir::Asc => ord,
+                SortDir::Desc => ord.reverse(),
+            }
+        }
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 /// Compute the set of node ids whose subtree contains at least one node
@@ -436,6 +461,168 @@ mod tests {
         assert!(set.contains(&root));
         assert!(!toggle_expand(&mut set, root)); // now collapsed
         assert!(!set.contains(&root));
+    }
+
+    #[test]
+    fn cmp_option_none_last_keeps_none_at_bottom_in_both_directions() {
+        use std::cmp::Ordering;
+        let a: Option<u8> = Some(1);
+        let b: Option<u8> = Some(2);
+        let n: Option<u8> = None;
+
+        // Some-vs-Some honours direction.
+        assert_eq!(cmp_option_none_last(&a, &b, SortDir::Asc), Ordering::Less);
+        assert_eq!(
+            cmp_option_none_last(&a, &b, SortDir::Desc),
+            Ordering::Greater
+        );
+
+        // Some-vs-None puts Some first regardless of direction.
+        assert_eq!(cmp_option_none_last(&a, &n, SortDir::Asc), Ordering::Less);
+        assert_eq!(cmp_option_none_last(&a, &n, SortDir::Desc), Ordering::Less);
+        assert_eq!(
+            cmp_option_none_last(&n, &a, SortDir::Asc),
+            Ordering::Greater
+        );
+        assert_eq!(
+            cmp_option_none_last(&n, &a, SortDir::Desc),
+            Ordering::Greater
+        );
+
+        // None-vs-None is Equal.
+        assert_eq!(cmp_option_none_last(&n, &n, SortDir::Asc), Ordering::Equal);
+        assert_eq!(cmp_option_none_last(&n, &n, SortDir::Desc), Ordering::Equal);
+    }
+
+    /// Build a tree where two of the three top-level children have an
+    /// `mtime` and one is `None`. Sort by `Mtime` and confirm the `None`
+    /// row lands at the end in both ascending and descending order.
+    #[test]
+    fn mtime_sort_keeps_unknown_rows_at_bottom_in_both_directions() {
+        use crate::scan::Node;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let mut t = Tree::new();
+        let r = t.insert(None, dir("root"));
+        // older
+        t.insert(
+            Some(r),
+            Node::new_leaf(
+                "older",
+                NodeKind::File,
+                10,
+                10,
+                Some(UNIX_EPOCH + Duration::from_secs(1_000_000)),
+                None,
+            ),
+        );
+        // newer
+        t.insert(
+            Some(r),
+            Node::new_leaf(
+                "newer",
+                NodeKind::File,
+                10,
+                10,
+                Some(UNIX_EPOCH + Duration::from_secs(2_000_000)),
+                None,
+            ),
+        );
+        // unknown mtime — was previously floated to the top under Asc and
+        // bottom under Desc; should now stay at the bottom in both.
+        t.insert(
+            Some(r),
+            Node::new_leaf("unknown", NodeKind::File, 10, 10, None, None),
+        );
+        t.aggregate();
+
+        let mut state = UiState::default();
+        state.expanded.insert(r);
+        state.sort_key = SortKey::Mtime;
+
+        // Asc
+        state.sort_dir = SortDir::Asc;
+        rebuild_visible_rows(&t, &mut state);
+        let asc: Vec<&str> = state
+            .visible_rows
+            .iter()
+            .skip(1)
+            .map(|row| t.get(row.id).unwrap().name.as_str())
+            .collect();
+        assert_eq!(
+            asc,
+            vec!["older", "newer", "unknown"],
+            "asc should sort known mtimes ascending and put None last"
+        );
+
+        // Desc
+        state.sort_dir = SortDir::Desc;
+        rebuild_visible_rows(&t, &mut state);
+        let desc: Vec<&str> = state
+            .visible_rows
+            .iter()
+            .skip(1)
+            .map(|row| t.get(row.id).unwrap().name.as_str())
+            .collect();
+        assert_eq!(
+            desc,
+            vec!["newer", "older", "unknown"],
+            "desc should sort known mtimes descending and STILL put None last"
+        );
+    }
+
+    /// Same idea as the mtime test but for `Owner`. Lexicographic order on
+    /// the `Some` branch, `None` at the bottom regardless of direction.
+    #[test]
+    fn owner_sort_keeps_unknown_rows_at_bottom_in_both_directions() {
+        use crate::scan::Node;
+
+        let mut t = Tree::new();
+        let r = t.insert(None, dir("root"));
+        t.insert(
+            Some(r),
+            Node::new_leaf(
+                "alice_file",
+                NodeKind::File,
+                10,
+                10,
+                None,
+                Some("alice".into()),
+            ),
+        );
+        t.insert(
+            Some(r),
+            Node::new_leaf("bob_file", NodeKind::File, 10, 10, None, Some("bob".into())),
+        );
+        t.insert(
+            Some(r),
+            Node::new_leaf("noowner_file", NodeKind::File, 10, 10, None, None),
+        );
+        t.aggregate();
+
+        let mut state = UiState::default();
+        state.expanded.insert(r);
+        state.sort_key = SortKey::Owner;
+
+        state.sort_dir = SortDir::Asc;
+        rebuild_visible_rows(&t, &mut state);
+        let asc: Vec<&str> = state
+            .visible_rows
+            .iter()
+            .skip(1)
+            .map(|row| t.get(row.id).unwrap().name.as_str())
+            .collect();
+        assert_eq!(asc, vec!["alice_file", "bob_file", "noowner_file"]);
+
+        state.sort_dir = SortDir::Desc;
+        rebuild_visible_rows(&t, &mut state);
+        let desc: Vec<&str> = state
+            .visible_rows
+            .iter()
+            .skip(1)
+            .map(|row| t.get(row.id).unwrap().name.as_str())
+            .collect();
+        assert_eq!(desc, vec!["bob_file", "alice_file", "noowner_file"]);
     }
 
     #[test]
