@@ -73,10 +73,56 @@ EOF
 )
 
 # Determine which model will be used and print it.
+#
+# `agent about` today emits a left-justified, whitespace-aligned table:
+#
+#   About Cursor CLI
+#
+#   CLI Version         2026.05.09-0afadcc
+#   Model               Opus 4.7 (Thinking) 300K Extra High
+#   Subscription Tier   Team
+#   ...
+#
+# We parse the "Model" row by:
+#   1. Anchoring on `^Model` followed by *at least one* whitespace
+#      character. The trailing `[[:space:]]+` matters: it makes us
+#      reject hypothetical future rows like `ModelVersion` or
+#      `ModelPricing` that would otherwise sneak through `^Model`.
+#   2. Stripping the leading `Model<whitespace>` to leave the value.
+#   3. Trimming surrounding whitespace as a belt-and-braces measure
+#      in case the column ever gains right-padding.
+#
+# If `agent about` ever changes format (renames the field, switches
+# to JSON, drops the line entirely), this whole pipeline falls
+# through to "unknown" and we print a one-line note so the user
+# can tell the script's heuristic broke. The review still runs —
+# we don't gate the commit on this purely-cosmetic banner.
+parse_review_model() {
+  # `exit` without an argument preserves the current status (0 here),
+  # then awk runs the END block. END only changes the exit code when
+  # we never hit the matching line, signalling "model not found" up
+  # to the bash caller.
+  awk '
+    /^Model[[:space:]]+/ {
+      sub(/^Model[[:space:]]+/, "")
+      sub(/[[:space:]]+$/, "")
+      print
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  '
+}
+
 if [[ -n "${CURSOR_REVIEW_MODEL:-}" ]]; then
   REVIEW_MODEL="$CURSOR_REVIEW_MODEL"
 else
-  REVIEW_MODEL="$(agent about 2>/dev/null | grep '^Model' | sed 's/^Model[[:space:]]*//' || echo 'unknown')"
+  REVIEW_MODEL="$(agent about 2>/dev/null | parse_review_model)" || REVIEW_MODEL=""
+  if [[ -z "$REVIEW_MODEL" ]]; then
+    echo "cursor-review: could not parse model from \`agent about\` output —" \
+         "agent CLI may have changed format. Continuing without banner." >&2
+    REVIEW_MODEL="unknown"
+  fi
 fi
 echo "cursor-review: model = $REVIEW_MODEL"
 
