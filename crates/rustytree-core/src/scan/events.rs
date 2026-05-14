@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use super::tree::Tree;
+use super::tree::{Tree, TreeError};
 use super::walker;
 
 /// Per-tick progress payload. Sent at most every ~50ms while the walker
@@ -54,11 +54,24 @@ pub enum ScanError {
     /// underlying `io::Error`.
     #[error("could not spawn scan worker thread: {0}")]
     SpawnFailed(#[source] std::io::Error),
+    /// The in-memory tree arena cannot grow further (>= `u32::MAX`
+    /// nodes). Structurally unreachable on any real filesystem but kept
+    /// as a typed error so the walker can bail cleanly instead of
+    /// panicking. Wraps the [`TreeError`] from
+    /// [`crate::scan::tree::Tree::insert`].
+    #[error("tree arena exhausted: {0}")]
+    TreeFull(#[source] TreeError),
     /// Scan was cancelled before it could finish. Delivered via the
     /// channel as [`ScanEvent::Cancelled`]; this variant exists so the
     /// walker can use `Result<Tree, ScanError>` internally.
     #[error("scan was cancelled")]
     Cancelled,
+}
+
+impl From<TreeError> for ScanError {
+    fn from(e: TreeError) -> Self {
+        ScanError::TreeFull(e)
+    }
 }
 
 /// Owned handle to a running scan worker thread.

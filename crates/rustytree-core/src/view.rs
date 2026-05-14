@@ -315,13 +315,13 @@ mod tests {
 
     fn sample() -> Tree {
         let mut t = Tree::new();
-        let r = t.insert(None, dir("root"));
-        let a = t.insert(Some(r), dir("alpha"));
-        t.insert(Some(a), file("a1.bin", 100));
-        t.insert(Some(a), file("a2.txt", 200));
-        let b = t.insert(Some(r), dir("beta"));
-        t.insert(Some(b), file("b1.bin", 50));
-        t.insert(Some(r), file("c.bin", 1000));
+        let r = t.insert(None, dir("root")).unwrap();
+        let a = t.insert(Some(r), dir("alpha")).unwrap();
+        t.insert(Some(a), file("a1.bin", 100)).unwrap();
+        t.insert(Some(a), file("a2.txt", 200)).unwrap();
+        let b = t.insert(Some(r), dir("beta")).unwrap();
+        t.insert(Some(b), file("b1.bin", 50)).unwrap();
+        t.insert(Some(r), file("c.bin", 1000)).unwrap();
         t.aggregate();
         t
     }
@@ -503,7 +503,7 @@ mod tests {
         use std::time::{Duration, UNIX_EPOCH};
 
         let mut t = Tree::new();
-        let r = t.insert(None, dir("root"));
+        let r = t.insert(None, dir("root")).unwrap();
         // older
         t.insert(
             Some(r),
@@ -515,7 +515,8 @@ mod tests {
                 Some(UNIX_EPOCH + Duration::from_secs(1_000_000)),
                 None,
             ),
-        );
+        )
+        .unwrap();
         // newer
         t.insert(
             Some(r),
@@ -527,13 +528,15 @@ mod tests {
                 Some(UNIX_EPOCH + Duration::from_secs(2_000_000)),
                 None,
             ),
-        );
+        )
+        .unwrap();
         // unknown mtime — was previously floated to the top under Asc and
         // bottom under Desc; should now stay at the bottom in both.
         t.insert(
             Some(r),
             Node::new_leaf("unknown", NodeKind::File, 10, 10, None, None),
-        );
+        )
+        .unwrap();
         t.aggregate();
 
         let mut state = UiState::default();
@@ -578,7 +581,7 @@ mod tests {
         use crate::scan::Node;
 
         let mut t = Tree::new();
-        let r = t.insert(None, dir("root"));
+        let r = t.insert(None, dir("root")).unwrap();
         t.insert(
             Some(r),
             Node::new_leaf(
@@ -589,15 +592,18 @@ mod tests {
                 None,
                 Some("alice".into()),
             ),
-        );
+        )
+        .unwrap();
         t.insert(
             Some(r),
             Node::new_leaf("bob_file", NodeKind::File, 10, 10, None, Some("bob".into())),
-        );
+        )
+        .unwrap();
         t.insert(
             Some(r),
             Node::new_leaf("noowner_file", NodeKind::File, 10, 10, None, None),
-        );
+        )
+        .unwrap();
         t.aggregate();
 
         let mut state = UiState::default();

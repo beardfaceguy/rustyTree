@@ -91,7 +91,7 @@ pub fn build_tree(
             Some(p)
         };
 
-        let id = tree.insert(parent, node);
+        let id = tree.insert(parent, node)?;
         if matches!(kind, NodeKind::Dir) {
             path_to_id.insert(path.clone(), id);
         }

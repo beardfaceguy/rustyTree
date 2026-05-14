@@ -98,6 +98,31 @@ pub struct Tree {
     root: Option<NodeId>,
 }
 
+/// Error returned by fallible [`Tree`] operations.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TreeError {
+    /// The arena would have grown past `u32::MAX` nodes — `NodeId` is a
+    /// `u32` and silently truncating would alias new nodes onto existing
+    /// ones, corrupting the tree. Structurally unreachable in any
+    /// realistic scan (a `Node` is well over 64 bytes, so `u32::MAX`
+    /// nodes is >256 GB of in-memory state) but typed so callers can
+    /// surface a clean error rather than abort.
+    #[error("tree arena cannot exceed u32::MAX nodes (NodeId is a u32)")]
+    ArenaCapacityExceeded,
+}
+
+/// Internal helper: compute the next `NodeId` for an arena of length
+/// `len`, returning `Err` if the arena is at capacity. Extracted so
+/// the bounds check is testable without actually allocating
+/// `u32::MAX` nodes.
+fn next_id_or_err(len: usize) -> Result<NodeId, TreeError> {
+    if len < u32::MAX as usize {
+        Ok(NodeId(len as u32))
+    } else {
+        Err(TreeError::ArenaCapacityExceeded)
+    }
+}
+
 impl Tree {
     pub fn new() -> Self {
         Self::default()
@@ -106,21 +131,14 @@ impl Tree {
     /// Add a node to the arena. Pass `parent = None` to set the root (only
     /// allowed once; subsequent calls with `None` parent are rejected).
     ///
-    /// # Panics
-    ///
-    /// Panics if the arena would grow past `u32::MAX` nodes (~4.29 B) —
-    /// `NodeId` is internally a `u32` and silently truncating would alias
-    /// every new node onto the existing root, corrupting the tree. In any
-    /// realistic scan this is unreachable: a `Node` is well over 64 bytes,
-    /// so an overflow would require >256 GB of in-memory tree state. The
-    /// panic exists purely as a defensive fail-fast guard.
-    pub fn insert(&mut self, parent: Option<NodeId>, mut node: Node) -> NodeId {
-        let next_index = self.nodes.len();
-        assert!(
-            next_index < u32::MAX as usize,
-            "Tree arena cannot exceed u32::MAX nodes (NodeId is a u32)"
-        );
-        let id = NodeId(next_index as u32);
+    /// Returns `Err(TreeError::ArenaCapacityExceeded)` if the arena would
+    /// grow past `u32::MAX` nodes — `NodeId` is internally a `u32` and
+    /// silently truncating would alias every new node onto the existing
+    /// root, corrupting the tree. Structurally unreachable in any
+    /// realistic scan (>256 GB of in-memory tree state) but typed so
+    /// callers can surface a clean error.
+    pub fn insert(&mut self, parent: Option<NodeId>, mut node: Node) -> Result<NodeId, TreeError> {
+        let id = next_id_or_err(self.nodes.len())?;
         node.parent = parent;
         self.nodes.push(node);
         match parent {
@@ -135,7 +153,7 @@ impl Tree {
                 self.root = Some(id);
             }
         }
-        id
+        Ok(id)
     }
 
     pub fn root(&self) -> Option<NodeId> {
@@ -304,13 +322,13 @@ mod tests {
     ///     c.bin 1000
     fn sample_tree() -> Tree {
         let mut t = Tree::new();
-        let root = t.insert(None, dir("root"));
-        let a = t.insert(Some(root), dir("a"));
-        t.insert(Some(a), file("a1.bin", 100));
-        t.insert(Some(a), file("a2.bin", 200));
-        let b = t.insert(Some(root), dir("b"));
-        t.insert(Some(b), file("b1.bin", 50));
-        t.insert(Some(root), file("c.bin", 1000));
+        let root = t.insert(None, dir("root")).unwrap();
+        let a = t.insert(Some(root), dir("a")).unwrap();
+        t.insert(Some(a), file("a1.bin", 100)).unwrap();
+        t.insert(Some(a), file("a2.bin", 200)).unwrap();
+        let b = t.insert(Some(root), dir("b")).unwrap();
+        t.insert(Some(b), file("b1.bin", 50)).unwrap();
+        t.insert(Some(root), file("c.bin", 1000)).unwrap();
         t
     }
 
@@ -398,6 +416,32 @@ mod tests {
         let mut t = Tree::new();
         t.aggregate();
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn next_id_or_err_succeeds_just_below_u32_max() {
+        // Pretend the arena currently holds `u32::MAX - 1` nodes; the
+        // next id is allowed.
+        let len = (u32::MAX as usize) - 1;
+        let id = next_id_or_err(len).expect("len < u32::MAX should succeed");
+        assert_eq!(id.as_u32(), len as u32);
+    }
+
+    #[test]
+    fn next_id_or_err_rejects_at_u32_max() {
+        // At exactly `u32::MAX` nodes, the next id would overflow, so
+        // we must refuse rather than silently aliasing onto an existing
+        // node.
+        let err = next_id_or_err(u32::MAX as usize).unwrap_err();
+        assert_eq!(err, TreeError::ArenaCapacityExceeded);
+    }
+
+    #[test]
+    fn tree_error_arena_capacity_displays_useful_message() {
+        // The user-facing string mentions u32 so a reader has a hint
+        // about why the limit exists.
+        let s = format!("{}", TreeError::ArenaCapacityExceeded);
+        assert!(s.contains("u32"), "got {s:?}");
     }
 
     #[test]
