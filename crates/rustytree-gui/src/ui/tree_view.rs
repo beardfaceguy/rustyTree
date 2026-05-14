@@ -55,13 +55,15 @@ pub fn render(app: &mut RustyTreeApp, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, total_rows, |ui, range| {
             for row_idx in range {
-                // `state.visible_rows` may have shrunk between the
-                // `show_rows` outer call and this iteration if the
-                // user just toggled expansion (which sets
-                // `rows_dirty = true` for the *next* frame, but the
-                // current frame's `total_rows` was captured before).
-                // Bail safely on out-of-range rather than indexing
-                // and panicking.
+                // Defensive: `total_rows` was captured before the
+                // closure ran. Today nothing inside this loop body
+                // mutates `state.visible_rows` (toggling expansion
+                // only sets `rows_dirty = true` for the *next* frame
+                // to pick up), so `row_idx < state.visible_rows.len()`
+                // is guaranteed by construction. `.get` keeps it that
+                // way: a future change that does shrink `visible_rows`
+                // mid-iteration will fall out cleanly instead of
+                // panicking on direct indexing.
                 let Some(&row) = state.visible_rows.get(row_idx) else {
                     break;
                 };
