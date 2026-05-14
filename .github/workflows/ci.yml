@@ -65,14 +65,12 @@ jobs:
       - name: Install pinned Rust toolchain
         # See note in the fmt job — using the maintained action so we
         # don't get bitten by rustup version drift across runner OSes.
+        # `setup-rust-toolchain@v1` runs Swatinem/rust-cache internally
+        # by default (cache: true), so we don't add a separate cache
+        # step — that would duplicate work with a different key.
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ""
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.os }}
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
